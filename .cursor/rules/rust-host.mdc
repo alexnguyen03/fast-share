@@ -1,0 +1,13 @@
+---
+description: Rust host rules for the Fast Share computer app
+globs: src-tauri/**/*.rs
+alwaysApply: true
+---
+
+# Rust host
+
+Code under `src-tauri` returns errors with `Result`. The image receive path does not call `unwrap` or `expect`. Do not use `unsafe` without a comment that states the invariant.
+
+One use case is one module. Clipboard, notifications, disk, and the clock sit behind traits in `ports`. Tests use fakes from those traits. Adapters in `adapters` are the only place that talks to the operating system.
+
+Commands call use cases. They do not decide file paths, trust, or retention.

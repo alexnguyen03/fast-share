@@ -1,0 +1,15 @@
+---
+description: Local-network upload rules for pairing and image receive
+globs: src-tauri/**/*.rs
+alwaysApply: true
+---
+
+# LAN upload
+
+An unknown phone is rejected. A QR payload expires and is not reused after the device is forgotten.
+
+Uploaded bytes become a domain image only after a size check and a successful decode. The computer assigns the stored file name. The client filename is never a path.
+
+Images stay on the LAN. There is no account and no internet relay.
+
+Settings updates are partial patches. Unknown keys are rejected. `history_retention_days` accepts only 1 through 90. Lowering it purges images older than the new limit immediately.

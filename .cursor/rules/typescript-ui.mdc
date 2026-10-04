@@ -1,0 +1,15 @@
+---
+description: TypeScript UI boundaries for the phone and desktop screens
+globs: src/**/*.{ts,tsx}
+alwaysApply: true
+---
+
+# TypeScript UI
+
+`src/phone` and `src/desktop` stay separate. Shared types live in `src/shared`.
+
+The UI calls Tauri commands. It does not open a socket and it does not write the history directory.
+
+Editor tools are the union `Crop | Arrow | Text | Blur`. Add a tool as a new variant instead of rewriting the canvas.
+
+User-facing strings live in `src/shared/locales/en.ts`. A later locale is a new file, not a hard-coded string in a component.
