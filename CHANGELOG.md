@@ -14,5 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Phone UI for one destination, crop, arrow, text, and blur, plus the desktop history panel.
 - iOS share extension sources and the script that reattaches them after `tauri ios init`.
 - GitHub Actions builds a portable Windows executable, an unsigned iOS app for sideload testing, and an Ad Hoc iOS app once signing secrets are set.
-- The phone scans a pairing QR with Tauri's barcode scanner, and the editor matches the phone layout.
+- The phone scans a pairing QR in a square, and shows each pairing step on screen.
+- The desktop tray opens the window on click and can exit while it is in the background.
 - Desktop history is a small floating panel.

@@ -2,13 +2,12 @@ import { api, type Destination } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
 import { mountDevices } from "../devices/devices";
 import { mountEditor, type Draft } from "../editor/editor";
+import { errorText, note } from "../log";
 
 export async function mountPhone(root: HTMLElement): Promise<void> {
   const shared = await api.takeSharedImages();
   if (shared.length === 0) {
-    await mountDevices(root, () => {
-      void mountPhone(root);
-    });
+    await mountDevices(root);
     return;
   }
   const drafts: Draft[] = shared.map((pngBase64, index) => ({
@@ -86,16 +85,19 @@ function openEditor(root: HTMLElement, drafts: Draft[], pc: Destination, all: De
     onSwitch: () => showSheet(root, drafts, all.filter((item) => item.online), all),
     onSend: async (images) => {
       try {
-        await api.sendBatch(pc.pcId, images);
-        const shell = document.createElement("section");
+      await api.sendBatch(pc.pcId, images);
+      note(en.sentTo(pc.name));
+      const shell = document.createElement("section");
         shell.className = "panel";
         const message = document.createElement("p");
         message.className = "status show";
         message.textContent = images.length === 1 ? `${en.sentTo(pc.name)} ${en.pasteReady}` : en.sentTo(pc.name);
         shell.append(message);
         root.replaceChildren(shell);
-      } catch {
-        throw new Error(en.didNotReceive(pc.name));
+      } catch (error) {
+        const message = errorText(error);
+        note(message || en.didNotReceive(pc.name));
+        throw new Error(message || en.didNotReceive(pc.name));
       }
     },
   });

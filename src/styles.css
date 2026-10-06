@@ -125,6 +125,38 @@ button:disabled { opacity: 0.45; }
   font-weight: 650;
 }
 .phone .scan { width: 100%; }
+.notice {
+  margin: 0;
+  min-height: 1.25em;
+  color: #d5dbe8;
+}
+.phone-log {
+  margin: 8px 0 0;
+  max-height: 9rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: #8b93a3;
+  font: 12px/1.45 ui-monospace, monospace;
+}
+html.phone.camera-open,
+html.phone.camera-open body,
+html.phone.camera-open #app,
+html.phone.camera-open .panel {
+  background: transparent;
+}
+.scan-hole {
+  width: min(68vw, 260px);
+  height: min(68vw, 260px);
+  margin: 28px auto;
+  border: 2px solid #f2f4f8;
+  border-radius: 18px;
+  background: transparent;
+  box-shadow: 0 0 0 100vmax #0e1014;
+}
+html.phone.camera-open .panel > :not(.scan-hole) {
+  position: relative;
+  z-index: 1;
+}
 .phone .line {
   border: 0;
   border-radius: 999px;
