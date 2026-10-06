@@ -206,6 +206,19 @@ export const api = {
     return invoke("open_history_image", { imageId });
   },
 
+  deleteHistoryImage(imageId: string): Promise<void> {
+    if (!inTauri()) {
+      preview.history = preview.history
+        .map((batch) => ({
+          ...batch,
+          images: batch.images.filter((image) => image.id !== imageId),
+        }))
+        .filter((batch) => batch.images.length > 0);
+      return Promise.resolve();
+    }
+    return invoke("delete_history_image", { imageId });
+  },
+
   deleteHistory(): Promise<void> {
     if (!inTauri()) {
       preview.history = [];

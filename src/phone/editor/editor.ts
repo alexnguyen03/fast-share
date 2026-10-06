@@ -29,17 +29,26 @@ export function mountEditor(root: HTMLElement, options: Options): void {
   const shell = document.createElement("section");
   shell.className = "panel editor";
   shell.innerHTML = `
-    <header class="bar">
-      <button type="button" data-action="close">${en.close}</button>
-      <button type="button" class="pc" data-action="switch"><span class="dot"></span><span data-pc></span></button>
-      <button type="button" class="primary" data-action="send"></button>
+    <header class="editor-top">
+      <button type="button" class="icon-btn" data-action="close" aria-label="${en.close}">${icons.close}</button>
+      <button type="button" class="dest-pill" data-action="switch">
+        <span class="dot"></span><span data-pc></span>${icons.chevron}
+      </button>
+      <button type="button" class="send-pill" data-action="send"><span data-send></span>${icons.send}</button>
     </header>
-    <canvas class="stage"></canvas>
-    <div class="thumbs" data-thumbs></div>
-    <label class="text-row"><input data-text type="text" maxlength="80" placeholder="${en.textPlaceholder}" /></label>
-    <div class="colors" data-colors></div>
-    <div class="tools" data-tools></div>
-    <p class="status" data-status></p>
+    <div class="editor-stage">
+      <canvas class="stage"></canvas>
+      <div class="tool-dock" data-tools></div>
+      <div class="editor-extra">
+        <div class="colors" data-colors></div>
+        <label class="text-row"><input data-text type="text" maxlength="80" placeholder="${en.textPlaceholder}" /></label>
+      </div>
+    </div>
+    <footer class="editor-foot">
+      <div class="thumbs" data-thumbs></div>
+      <p class="hold">${en.holdToRemove}</p>
+      <p class="status" data-status></p>
+    </footer>
   `;
   root.replaceChildren(shell);
 
@@ -50,9 +59,10 @@ export function mountEditor(root: HTMLElement, options: Options): void {
   const status = shell.querySelector<HTMLElement>("[data-status]");
   const textInput = shell.querySelector<HTMLInputElement>("[data-text]");
   const sendButton = shell.querySelector<HTMLButtonElement>("[data-action=send]");
+  const sendLabel = shell.querySelector<HTMLElement>("[data-send]");
   const pcButton = shell.querySelector<HTMLElement>("[data-pc]");
   const dot = shell.querySelector<HTMLElement>(".dot");
-  if (!canvas || !thumbs || !colors || !tools || !status || !textInput || !sendButton || !pcButton || !dot) {
+  if (!canvas || !thumbs || !colors || !tools || !status || !textInput || !sendButton || !sendLabel || !pcButton || !dot) {
     return;
   }
   const context = canvas.getContext("2d");
@@ -67,20 +77,27 @@ export function mountEditor(root: HTMLElement, options: Options): void {
   const statusLine = status;
   const textField = textInput;
   const sendControl = sendButton;
+  const sendText = sendLabel;
   const pcLabel = pcButton;
   const onlineDot = dot;
 
   const toolButtons: Array<[EditorTool | "undo", string]> = [
     ["crop", en.crop],
     ["arrow", en.arrow],
-    ["text", en.text],
     ["blur", en.blur],
+    ["text", en.text],
     ["undo", en.undo],
   ];
   for (const [name, label] of toolButtons) {
+    if (name === "undo") {
+      const split = document.createElement("span");
+      split.className = "split";
+      toolRow.append(split);
+    }
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = label;
+    button.innerHTML = icons[name];
+    button.setAttribute("aria-label", label);
     button.dataset.tool = name;
     toolRow.append(button);
   }
@@ -104,10 +121,16 @@ export function mountEditor(root: HTMLElement, options: Options): void {
     if (!item) {
       return;
     }
-    const width = stage.clientWidth;
-    const height = stage.clientHeight;
-    stage.width = width;
-    stage.height = height;
+    const box = stage.parentElement;
+    const width = box?.clientWidth ?? 0;
+    const height = box?.clientHeight ?? 0;
+    if (width < 2 || height < 2) {
+      return;
+    }
+    stage.style.width = `${width}px`;
+    stage.style.height = `${height}px`;
+    stage.width = Math.round(width);
+    stage.height = Math.round(height);
     ctx.clearRect(0, 0, width, height);
     if (!image.naturalWidth) {
       return;
@@ -124,9 +147,9 @@ export function mountEditor(root: HTMLElement, options: Options): void {
   }
 
   function renderChrome(): void {
-    pcLabel.textContent = options.pcName;
+    pcLabel.textContent = en.toComputer(options.pcName);
     onlineDot.classList.toggle("on", options.online);
-    sendControl.textContent = en.sendCount(options.drafts.length);
+    sendText.textContent = en.sendCount(options.drafts.length);
     sendControl.disabled = options.drafts.length === 0;
     textField.parentElement?.classList.toggle("show", tool === "text");
     colorRow.classList.toggle("show", tool === "arrow" || tool === "text");
@@ -296,9 +319,24 @@ export function mountEditor(root: HTMLElement, options: Options): void {
     }
   }
 
+  const stageBox = shell.querySelector(".editor-stage");
+  if (stageBox) {
+    new ResizeObserver(() => paint()).observe(stageBox);
+  }
   loadSelected();
   renderChrome();
 }
+
+const icons = {
+  close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>`,
+  chevron: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5"/></svg>`,
+  send: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h12M13 7l5 5-5 5"/></svg>`,
+  crop: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H4v4M16 3h4v4M8 21H4v-4M16 21h4v-4"/></svg>`,
+  arrow: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7M10 7h7v7"/></svg>`,
+  blur: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><circle cx="9" cy="9" r="1"/><circle cx="12" cy="9" r="1"/><circle cx="15" cy="9" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="15" r="1"/><circle cx="12" cy="15" r="1"/><circle cx="15" cy="15" r="1"/></svg>`,
+  text: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12M12 6v12"/></svg>`,
+  undo: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8H5V5"/><path d="M5 8a7 7 0 1 1-1 4"/></svg>`,
+};
 
 function markFromDrag(
   tool: EditorTool,

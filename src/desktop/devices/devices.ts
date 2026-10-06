@@ -2,7 +2,7 @@ import { api, type PhoneView } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
 
 export async function mountPhones(root: HTMLElement, onBack: () => void): Promise<void> {
-  const phones = await api.listPhones();
+  const [phones, status] = await Promise.all([api.listPhones(), api.hostStatus()]);
   const shell = document.createElement("section");
   shell.className = "panel";
   shell.innerHTML = `
@@ -10,9 +10,19 @@ export async function mountPhones(root: HTMLElement, onBack: () => void): Promis
       <button type="button" data-action="back">${en.back}</button>
       <h1>${en.phones}</h1>
     </header>
+    <div class="qr" data-qr></div>
     <div class="list" data-list></div>
   `;
   root.replaceChildren(shell);
+  const qr = shell.querySelector<HTMLElement>("[data-qr]");
+  if (qr) {
+    const image = document.createElement("img");
+    image.alt = en.pairPhone;
+    image.src = `data:image/png;base64,${status.qrPngBase64}`;
+    const caption = document.createElement("p");
+    caption.textContent = status.pcName;
+    qr.append(image, caption);
+  }
   const list = shell.querySelector<HTMLElement>("[data-list]");
   if (!list) {
     return;
