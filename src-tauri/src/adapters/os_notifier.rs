@@ -26,6 +26,7 @@ impl Notifier for OsNotifier {
         let _ = self.app.emit("history-focus", ());
         if let Some(window) = self.app.get_webview_window("main") {
             let _ = window.show();
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             let _ = window.unminimize();
             let _ = window.set_focus();
         }

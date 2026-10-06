@@ -89,16 +89,24 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist-ios
-          search=(src-tauri/gen/apple)
-          if [ -d "$HOME/Library/Developer/Xcode/Archives" ]; then
-            search+=("$HOME/Library/Developer/Xcode/Archives")
+          ipa=""
+          for candidate in \
+            "src-tauri/gen/apple/build/arm64/Fast Share.ipa" \
+            "src-tauri/gen/apple/build/arm64/fast-share.ipa"
+          do
+            if [ -f "$candidate" ]; then
+              ipa="$candidate"
+              break
+            fi
+          done
+          if [ -z "$ipa" ]; then
+            set +o pipefail
+            ipa=$(find src-tauri/gen/apple -name '*.ipa' -print | head -n 1 || true)
+            set -o pipefail
           fi
-          set +o pipefail
-          ipa=$(find "${search[@]}" -name '*.ipa' -print | head -n 1 || true)
-          set -o pipefail
           if [ -z "$ipa" ]; then
             echo "No unsigned IPA was produced."
-            find src-tauri/gen/apple -type d -name '*.app' -o -type d -name '*.xcarchive' || true
+            find src-tauri/gen/apple -type d \( -name '*.app' -o -name '*.xcarchive' \) || true
             exit 1
           fi
           cp "$ipa" dist-ios/FastShare-unsigned.ipa
