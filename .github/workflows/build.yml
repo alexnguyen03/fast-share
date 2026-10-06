@@ -1,0 +1,186 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build.yml"
+      - "package.json"
+      - "package-lock.json"
+      - "index.html"
+      - "src/**"
+      - "src-tauri/**"
+      - "share-extension/**"
+      - "scripts/**"
+      - "vite.config.ts"
+      - "tsconfig.json"
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows portable
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the portable executable
+        run: npm run tauri build -- --no-bundle --ci
+      - name: Collect the executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-portable | Out-Null
+          Copy-Item src-tauri\target\release\fast-share.exe dist-portable\
+          if (Test-Path src-tauri\target\release\WebView2Loader.dll) {
+            Copy-Item src-tauri\target\release\WebView2Loader.dll dist-portable\
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fast-share-windows
+          path: dist-portable/*
+          if-no-files-found: error
+          retention-days: 14
+
+  ios-unsigned:
+    name: iOS unsigned
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+      - name: Install CocoaPods
+        run: |
+          if ! command -v pod >/dev/null; then
+            brew install cocoapods
+          fi
+      - run: npm ci
+      - name: Generate the Xcode project
+        run: npm run tauri ios init -- --ci
+      - name: Attach the share extension
+        run: bash scripts/setup-ios-share-extension.sh
+      - name: Build the unsigned IPA
+        run: npm run tauri ios build -- --no-sign --ci
+      - name: Collect the IPA
+        run: |
+          set -euo pipefail
+          mkdir -p dist-ios
+          search=(src-tauri/gen/apple)
+          if [ -d "$HOME/Library/Developer/Xcode/Archives" ]; then
+            search+=("$HOME/Library/Developer/Xcode/Archives")
+          fi
+          set +o pipefail
+          ipa=$(find "${search[@]}" -name '*.ipa' -print | head -n 1 || true)
+          set -o pipefail
+          if [ -z "$ipa" ]; then
+            echo "No unsigned IPA was produced."
+            find src-tauri/gen/apple -type d -name '*.app' -o -type d -name '*.xcarchive' || true
+            exit 1
+          fi
+          cp "$ipa" dist-ios/FastShare-unsigned.ipa
+          echo "IPA source: $ipa"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fast-share-ios-unsigned
+          path: dist-ios/FastShare-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+  ios-signing:
+    name: iOS signing
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+          IOS_SHARE_MOBILE_PROVISION: ${{ secrets.IOS_SHARE_MOBILE_PROVISION }}
+        run: |
+          set -euo pipefail
+          if [ -n "$IOS_CERTIFICATE" ] && [ -n "$IOS_CERTIFICATE_PASSWORD" ] && [ -n "$IOS_MOBILE_PROVISION" ] && [ -n "$IOS_SHARE_MOBILE_PROVISION" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Signing secrets are unset. Skipping the signed IPA. The unsigned IPA job still runs."
+          fi
+
+  ios:
+    name: iOS device
+    needs: ios-signing
+    if: needs.ios-signing.outputs.enabled == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+      - name: Install CocoaPods
+        run: |
+          if ! command -v pod >/dev/null; then
+            brew install cocoapods
+          fi
+      - run: npm ci
+      - name: Generate the Xcode project
+        run: npm run tauri ios init -- --ci
+      - name: Attach the share extension
+        run: bash scripts/setup-ios-share-extension.sh
+      - name: Install Ad Hoc profiles
+        env:
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+          IOS_SHARE_MOBILE_PROVISION: ${{ secrets.IOS_SHARE_MOBILE_PROVISION }}
+        run: python3 scripts/ios_ci.py sign
+      - name: Build and export the IPA
+        env:
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+        run: |
+          set +e
+          npm run tauri ios build -- --export-method release-testing --ci
+          status=$?
+          set -e
+          echo "tauri ios build exited ${status}"
+          python3 scripts/ios_ci.py export
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fast-share-ios
+          path: src-tauri/gen/apple/build/FastShare.ipa
+          if-no-files-found: error
+          retention-days: 14

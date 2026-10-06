@@ -27,7 +27,8 @@ src (phone, desktop)
 - `src-tauri/src/domain` holds ids, device state, validated images, and settings.
 - `src-tauri/src/use_cases` holds one module per job: accept a device, ingest a batch, copy an image, purge history, update settings.
 - `src-tauri/src/ports` holds traits for the clipboard, notifier, clock, and file store.
-- `src-tauri/src/adapters` holds the real OS implementations.
+- `src-tauri/src/adapters` holds the operating system implementations, the pinned phone client, mDNS, and the share-extension inbox.
+- `src-tauri/src/runtime.rs` is the composition root: it owns the store, the pairing ticket, and the LAN server. Commands lock that state and call use cases.
 - `share-extension/` is the Swift source. It copies images into the App Group and opens the app. It does not draw and it does not open a socket. `src-tauri/gen` is generated. Do not treat it as the source.
 
 ## Invariants
