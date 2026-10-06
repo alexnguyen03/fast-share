@@ -136,9 +136,9 @@ blocks = {
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			}};
-			name = Debug;
+			name = debug;
 		}};
-		{ids['release']} /* Release */ = {{
+		{ids['release']} /* release */ = {{
 			isa = XCBuildConfiguration;
 			buildSettings = {{
 				CODE_SIGN_ENTITLEMENTS = ShareExtension/ShareExt.entitlements;
@@ -151,28 +151,40 @@ blocks = {
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			}};
-			name = Release;
+			name = release;
 		}};
 """,
     "XCConfigurationList": f"""
 		{ids['list']} /* Build configuration list for PBXNativeTarget "ShareExtension" */ = {{
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				{ids['debug']} /* Debug */,
-				{ids['release']} /* Release */,
+				{ids['debug']} /* debug */,
+				{ids['release']} /* release */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+			defaultConfigurationName = release;
 		}};
 """,
 }
 
+def insert_section(text, section, block):
+    begin = f"/* Begin {section} section */"
+    if begin in text:
+        return text.replace(begin, begin + block, 1)
+    created = f"\n/* Begin {section} section */{block}/* End {section} section */\n"
+    for anchor in (
+        "/* End PBXResourcesBuildPhase section */",
+        "/* End PBXSourcesBuildPhase section */",
+        "/* End PBXNativeTarget section */",
+        "/* Begin PBXProject section */",
+    ):
+        if anchor in text:
+            return text.replace(anchor, anchor + "\n" + created, 1)
+    raise SystemExit(f"This Xcode project has no {section} section and no place to add one.")
+
 updated = text
 for section, block in blocks.items():
-    marker = f"/* Begin {section} section */"
-    if marker not in updated:
-        raise SystemExit(f"This Xcode project has no {section} section. The files were copied; attach ShareExtension manually.")
-    updated = updated.replace(marker, marker + block, 1)
+    updated = insert_section(updated, section, block)
 
 main_group = None
 for line in updated.splitlines():
@@ -205,9 +217,10 @@ if products < 0:
 product_children = updated.find("children = (", products)
 updated = updated[: product_children + len("children = (")] + f"\n\t\t\t\t{ids['product']} /* ShareExtension.appex */," + updated[product_children + len("children = ("):]
 
-app_target = updated.find("isa = PBXNativeTarget;")
+app_type = updated.find('productType = "com.apple.product-type.application"')
+app_target = updated.rfind("isa = PBXNativeTarget;", 0, app_type)
 phases = updated.find("buildPhases = (", app_target)
-if app_target < 0 or phases < 0:
+if app_type < 0 or app_target < 0 or phases < 0 or phases > app_type:
     raise SystemExit("Could not find the app target build phases.")
 updated = updated[: phases + len("buildPhases = (")] + f"\n\t\t\t\t{ids['embed']} /* Embed Foundation Extensions */," + updated[phases + len("buildPhases = ("):]
 

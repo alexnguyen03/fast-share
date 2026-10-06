@@ -105,21 +105,55 @@ def patch_configurations(text, bundle_id, lines, label):
     return updated
 
 
+def merge_app_group(entitlements_file):
+    if entitlements_file.is_file():
+        with entitlements_file.open("rb") as handle:
+            plist = plistlib.load(handle)
+    else:
+        plist = {}
+    groups = list(plist.get("com.apple.security.application-groups") or [])
+    if APP_GROUP not in groups:
+        groups.append(APP_GROUP)
+    plist["com.apple.security.application-groups"] = groups
+    entitlements_file.parent.mkdir(parents=True, exist_ok=True)
+    with entitlements_file.open("wb") as handle:
+        plistlib.dump(plist, handle, fmt=plistlib.FMT_XML)
+
+
+def existing_entitlements(block):
+    marker = "CODE_SIGN_ENTITLEMENTS = "
+    at = block.find(marker)
+    if at < 0:
+        return None
+    return block[at + len(marker) :].split(";", 1)[0].strip().strip('"')
+
+
 def attach_entitlements(project):
     root = repo_root()
     source = root / "share-extension" / "App.entitlements"
-    destination = project.parent.parent / "App.entitlements"
+    apple_dir = project.parent.parent
+    destination = apple_dir / "App.entitlements"
     if not source.is_file():
         fail(f"Missing {source}.")
     destination.write_bytes(source.read_bytes())
     text = project.read_text()
-    text = patch_configurations(
-        text,
-        APP_BUNDLE,
-        ["CODE_SIGN_ENTITLEMENTS = App.entitlements;"],
-        "app",
-    )
-    project.write_text(text)
+    merged = False
+    for brace, end in object_blocks(text, "XCBuildConfiguration"):
+        block = text[brace:end]
+        if bundle_identifier(block) != APP_BUNDLE:
+            continue
+        relative = existing_entitlements(block)
+        if relative and relative != "App.entitlements":
+            merge_app_group(apple_dir / relative)
+            merged = True
+    if not merged:
+        text = patch_configurations(
+            text,
+            APP_BUNDLE,
+            ["CODE_SIGN_ENTITLEMENTS = App.entitlements;"],
+            "app",
+        )
+        project.write_text(text)
     print(f"App group {APP_GROUP} is on the main iOS target.")
 
 
