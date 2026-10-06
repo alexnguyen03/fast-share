@@ -5,6 +5,7 @@ mod ports;
 mod runtime;
 mod use_cases;
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
