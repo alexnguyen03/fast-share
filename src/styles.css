@@ -1,0 +1,116 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+  background: #12141a;
+  color: #f2f4f8;
+  accent-color: #6ea8fe;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+#app, .panel {
+  min-height: 100vh;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+.bar, .row, .foot, .line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bar { justify-content: space-between; }
+.foot { margin-top: auto; justify-content: space-between; }
+
+h1, p { margin: 0; }
+h1 { font-size: 1.05rem; font-weight: 650; }
+
+button, input {
+  font: inherit;
+  color: inherit;
+  background: #1c2230;
+  border: 1px solid #2c3444;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+button.primary { background: #6ea8fe; color: #101218; border-color: transparent; }
+button.active, .line.selected, .thumb.selected { outline: 2px solid #6ea8fe; }
+button:disabled { opacity: 0.45; }
+
+.stage {
+  width: 100%;
+  height: 360px;
+  background: #0b0d12;
+  border-radius: 12px;
+}
+
+.thumbs, .tools, .colors {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.colors, .text-row, .file, video { display: none; }
+.colors.show, .text-row.show, .file.show, video.show { display: flex; }
+.text-row, .file { width: 100%; }
+.text-row input, .form input { width: 100%; }
+
+.thumb {
+  padding: 0;
+  border-radius: 8px;
+  position: relative;
+}
+.thumb img, .hero, .qr img {
+  display: block;
+  object-fit: cover;
+}
+.thumb img { width: 64px; height: 64px; }
+.thumb.marked::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6ea8fe;
+}
+.hero { width: 100%; max-height: 280px; border-radius: 12px; background: #0b0d12; }
+.qr img { width: 220px; height: 220px; margin: 8px auto; }
+
+.pc { display: flex; align-items: center; gap: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #667; }
+.dot.on { background: #3dd68c; }
+
+.status { display: none; color: #c9d2e3; }
+.status.show, .editor .status:not(:empty) { display: block; }
+
+.form, .list, .latest { display: flex; flex-direction: column; gap: 10px; }
+.line { justify-content: space-between; text-align: left; }
+.swatch { width: 28px; height: 28px; padding: 0; }
+.dialog {
+  position: sticky;
+  bottom: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #1c2230;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tools button { flex: 1; }

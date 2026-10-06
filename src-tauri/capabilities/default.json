@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "description": "Fast Share window permissions",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "notification:default",
+    "opener:default"
+  ]
+}
