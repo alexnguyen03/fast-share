@@ -114,3 +114,335 @@ button:disabled { opacity: 0.45; }
 }
 
 .tools button { flex: 1; }
+
+.phone .primary,
+.phone .scan {
+  background: #4c8dff;
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  min-height: 48px;
+  font-weight: 650;
+}
+.phone .scan { width: 100%; }
+.phone .line {
+  border: 0;
+  border-radius: 999px;
+  background: #2a2e36;
+  min-height: 48px;
+  padding: 0 16px;
+}
+
+.editor {
+  max-width: none;
+  gap: 0;
+  padding: 14px 14px 20px;
+  background: #0e1014;
+}
+.editor-top {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+.editor svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.editor svg circle { fill: currentColor; stroke: none; }
+.icon-btn, .dest-pill, .send-pill, .tool-dock button {
+  border: 0;
+  background: #2a2e36;
+}
+.icon-btn {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+}
+.dest-pill {
+  height: 44px;
+  min-width: 0;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 14px;
+}
+.dest-pill span:last-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dest-pill svg { width: 16px; height: 16px; flex: none; }
+.send-pill {
+  height: 44px;
+  border-radius: 999px;
+  background: #4c8dff;
+  color: #fff;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+}
+.send-pill svg { width: 16px; height: 16px; }
+.editor-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 14px 0 12px;
+}
+.editor .stage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  background: transparent;
+  border-radius: 0;
+  touch-action: none;
+}
+.tool-dock {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  z-index: 2;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 999px;
+  background: #2a2e36;
+}
+.tool-dock button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  display: grid;
+  place-items: center;
+}
+.tool-dock button.active { background: #4c8dff; outline: none; }
+.tool-dock .split {
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+  background: #4a5160;
+}
+.editor-extra {
+  position: absolute;
+  top: 62px;
+  left: 12px;
+  right: 12px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.editor .colors.show {
+  width: auto;
+  padding: 6px;
+  border-radius: 999px;
+  background: #2a2e36;
+}
+.editor .text-row input {
+  border: 0;
+  border-radius: 999px;
+  background: #2a2e36;
+  padding: 10px 14px;
+}
+.editor-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.editor .thumbs { width: 100%; justify-content: center; }
+.editor .thumb {
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  outline: none;
+  opacity: 0.45;
+}
+.editor .thumb.selected {
+  border-color: #e7ebf3;
+  opacity: 1;
+  outline: none;
+}
+.editor .thumb img {
+  width: 54px;
+  height: 70px;
+  border-radius: 8px;
+}
+.hold {
+  margin: 0;
+  color: #9aa3b2;
+  font-size: 0.84rem;
+  text-align: center;
+}
+
+html.desktop,
+html.desktop body,
+html.desktop #app {
+  height: 100%;
+  min-height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+html.phone,
+html.phone body,
+html.phone #app {
+  background: #0e1014;
+}
+html.desktop .panel {
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  padding: 16px 16px 12px;
+  border-radius: 22px;
+  background: #1b1e27;
+  overflow: auto;
+}
+html.desktop .desk-top,
+html.desktop .batch-title,
+html.desktop .earlier-row,
+html.desktop .actions,
+html.desktop .foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+html.desktop .desk-top,
+html.desktop .batch-title,
+html.desktop .earlier-row,
+html.desktop .foot {
+  justify-content: space-between;
+}
+html.desktop .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #c5cad6;
+  font-size: 0.92rem;
+}
+html.desktop .brand strong {
+  color: #f4f6fb;
+  font-size: 1.05rem;
+}
+html.desktop .icon-btn {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  display: grid;
+  place-items: center;
+}
+html.desktop .icon-btn svg,
+html.desktop .desk-top svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+html.desktop .desk-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+html.desktop .batch-title strong {
+  font-size: 1rem;
+}
+html.desktop .batch-title span,
+html.desktop .earlier,
+html.desktop .when,
+html.desktop .foot .text {
+  color: #9aa3b2;
+  font-size: 0.86rem;
+}
+html.desktop .hero {
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: 16px;
+  background: #f7f8fb;
+}
+html.desktop .thumbs { justify-content: flex-start; }
+html.desktop .thumb {
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: #12141a;
+  outline: none;
+  opacity: 0.55;
+}
+html.desktop .thumb.selected {
+  border-color: #d7dbe6;
+  opacity: 1;
+  outline: none;
+}
+html.desktop .thumb img { width: 52px; height: 40px; border-radius: 8px; }
+html.desktop .actions { gap: 8px; }
+html.desktop .actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 12px;
+  background: #2a3040;
+}
+html.desktop .actions .primary {
+  flex: 1.4;
+  background: #4c8dff;
+  color: #fff;
+}
+html.desktop .actions button:not(.primary) { flex: 1; }
+html.desktop kbd {
+  font: inherit;
+  font-size: 0.75rem;
+  opacity: 0.75;
+}
+html.desktop .earlier { margin-top: 4px; }
+html.desktop .earlier-row {
+  width: 100%;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+}
+html.desktop .earlier-row img {
+  width: 28px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #f7f8fb;
+}
+html.desktop .earlier-row span:nth-of-type(1) { flex: 1; }
+html.desktop .foot { margin-top: auto; }
+html.desktop .foot .text {
+  border: 0;
+  background: transparent;
+  padding: 8px 0;
+}
+html.desktop .qr img { width: 180px; height: 180px; }

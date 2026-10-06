@@ -35,7 +35,7 @@ async function chooseDestination(root: HTMLElement, drafts: Draft[]): Promise<vo
 
 function showSheet(root: HTMLElement, drafts: Draft[], online: Destination[], all: Destination[]): void {
   const shell = document.createElement("section");
-  shell.className = "panel";
+  shell.className = "panel phone";
   shell.innerHTML = `<header class="bar"><h1>${en.sendTo}</h1></header><div class="list" data-list></div>`;
   root.replaceChildren(shell);
   const list = shell.querySelector<HTMLElement>("[data-list]");
@@ -54,7 +54,7 @@ function showSheet(root: HTMLElement, drafts: Draft[], online: Destination[], al
 
 function showOffline(root: HTMLElement, drafts: Draft[]): void {
   const shell = document.createElement("section");
-  shell.className = "panel";
+  shell.className = "panel phone";
   shell.innerHTML = `
     <p class="status show">${en.offline}</p>
     <div class="row">

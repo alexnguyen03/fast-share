@@ -4,14 +4,12 @@ import { en } from "../../shared/locales/en";
 export async function mountDevices(root: HTMLElement, onReady: () => void): Promise<void> {
   const known = await api.listKnownPcs();
   const shell = document.createElement("section");
-  shell.className = "panel";
+  shell.className = "panel phone";
   shell.innerHTML = `
     <header class="bar"><h1>${en.knownComputers}</h1></header>
     <div class="list" data-list></div>
-    <p class="status" data-status></p>
-    <div class="row">
-      <button type="button" class="primary" data-action="scan">${en.scanQr}</button>
-    </div>
+    <p class="status show" data-status></p>
+    <button type="button" class="primary scan" data-action="scan">${en.scanQr}</button>
     <video data-camera playsinline></video>
     <label class="file">${en.chooseQr}<input data-file type="file" accept="image/*" /></label>
   `;
@@ -25,7 +23,6 @@ export async function mountDevices(root: HTMLElement, onReady: () => void): Prom
   }
   if (known.length === 0) {
     status.textContent = en.noComputers;
-    void startScan(video, file, status, onReady);
   }
   renderPcs(list, known, status);
   shell.querySelector("[data-action=scan]")?.addEventListener("click", () => {
@@ -56,12 +53,20 @@ function renderPcs(list: HTMLElement, pcs: Destination[], status: HTMLElement): 
   }
 }
 
+function runningInApp(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
 async function startScan(
   video: HTMLVideoElement,
   file: HTMLInputElement,
   status: HTMLElement,
   onReady: () => void,
 ): Promise<void> {
+  if (runningInApp()) {
+    await scanWithDeviceCamera(status, onReady);
+    return;
+  }
   file.parentElement?.classList.add("show");
   file.onchange = () => {
     const image = file.files?.[0];
@@ -97,6 +102,18 @@ async function startScan(
     void tick();
   } catch {
     status.textContent = en.cameraUnavailable;
+  }
+}
+
+async function scanWithDeviceCamera(status: HTMLElement, onReady: () => void): Promise<void> {
+  const previous = status.textContent ?? "";
+  status.textContent = en.scanning;
+  try {
+    const { scan, Format } = await import("@tauri-apps/plugin-barcode-scanner");
+    const scanned = await scan({ formats: [Format.QRCode] });
+    await pairPayload(scanned.content, status, onReady);
+  } catch {
+    status.textContent = previous;
   }
 }
 

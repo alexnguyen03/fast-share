@@ -14,6 +14,8 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            #[cfg(mobile)]
+            app.handle().plugin(tauri_plugin_barcode_scanner::init())?;
             runtime::start(app.handle().clone()).map_err(|error| -> Box<dyn std::error::Error> {
                 std::io::Error::other(error).into()
             })?;

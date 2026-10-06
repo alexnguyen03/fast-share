@@ -21,7 +21,7 @@ src (phone, desktop)
 
 ## Folders
 
-- `src/phone` is the editor, destination picker, and pairing screen.
+- `src/phone` is the editor, destination picker, and pairing screen. Pairing opens the device camera through the barcode-scanner plugin. The webview does not decode QR codes.
 - `src/desktop` is history, trusted phones, and settings.
 - `src/shared` holds command types, settings types, and `locales/en.ts`.
 - `src-tauri/src/domain` holds ids, device state, validated images, and settings.

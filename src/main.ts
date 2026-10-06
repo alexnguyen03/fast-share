@@ -10,6 +10,7 @@ async function boot(): Promise<void> {
     return;
   }
   const surface = await api.surface();
+  document.documentElement.classList.add(surface);
   if (surface === "phone") {
     await mountPhone(root);
     return;
