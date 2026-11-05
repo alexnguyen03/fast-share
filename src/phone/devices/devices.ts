@@ -1,10 +1,17 @@
-import { api, type Destination } from "../../shared/commands";
+import { api, type Destination, type NearbyPc, type PairResult } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
 import { errorText, latestNote, logText, note } from "../log";
 
-export async function mountDevices(root: HTMLElement, onPaired?: () => void): Promise<void> {
+export async function mountDevices(
+  root: HTMLElement,
+  onPaired?: () => void,
+  onPickImages?: (imagesBase64: string[]) => void,
+): Promise<void> {
   let scanning = false;
   let cancelScan: (() => Promise<void>) | null = null;
+  let codeValue = "";
+  let addressValue = "";
+  let nearbyList: NearbyPc[] = [];
 
   const shell = document.createElement("section");
   shell.className = "panel phone";
@@ -15,6 +22,17 @@ export async function mountDevices(root: HTMLElement, onPaired?: () => void): Pr
     log.className = "phone-log";
     log.textContent = logText();
     parent.append(log);
+  }
+
+  async function refreshNearby(): Promise<void> {
+    try {
+      nearbyList = await api.discoverNearbyPcs();
+    } catch {
+      nearbyList = [];
+    }
+    if (!scanning && shell.isConnected) {
+      await renderHome();
+    }
   }
 
   async function renderHome(): Promise<void> {
@@ -35,6 +53,74 @@ export async function mountDevices(root: HTMLElement, onPaired?: () => void): Pr
     scan.addEventListener("click", () => {
       void startScan();
     });
+
+    const codeForm = document.createElement("form");
+    codeForm.className = "form code-form";
+    const codeRow = document.createElement("div");
+    codeRow.className = "row";
+    const codeInput = document.createElement("input");
+    codeInput.type = "text";
+    codeInput.inputMode = "numeric";
+    codeInput.maxLength = 6;
+    codeInput.placeholder = en.pairCodePlaceholder;
+    codeInput.value = codeValue;
+    codeInput.addEventListener("input", () => {
+      codeValue = codeInput.value.replace(/\D+/g, "").slice(0, 6);
+      codeInput.value = codeValue;
+    });
+    const codeSubmit = document.createElement("button");
+    codeSubmit.type = "submit";
+    codeSubmit.className = "primary";
+    codeSubmit.textContent = en.pairWithCodeButton;
+    codeRow.append(codeInput, codeSubmit);
+
+    const addrInput = document.createElement("input");
+    addrInput.type = "text";
+    addrInput.placeholder = en.lanAddressPlaceholder;
+    addrInput.value = addressValue;
+    addrInput.setAttribute("aria-label", en.lanAddressLabel);
+    addrInput.addEventListener("input", () => {
+      addressValue = addrInput.value;
+    });
+    codeForm.append(codeRow, addrInput);
+    codeForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (codeValue.length !== 6) {
+        return;
+      }
+      void submitCode(codeValue, addressValue);
+    });
+
+    const nearbyWrap = document.createElement("div");
+    nearbyWrap.className = "list";
+    const nearbyBar = document.createElement("div");
+    nearbyBar.className = "bar";
+    const nearbyLabel = document.createElement("span");
+    nearbyLabel.className = "when";
+    nearbyLabel.textContent = en.nearbyOnWifi;
+    const nearbyRefresh = document.createElement("button");
+    nearbyRefresh.type = "button";
+    nearbyRefresh.textContent = en.refreshNearby;
+    nearbyRefresh.addEventListener("click", () => {
+      void refreshNearby();
+    });
+    nearbyBar.append(nearbyLabel, nearbyRefresh);
+    nearbyWrap.append(nearbyBar);
+    for (const item of nearbyList) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "line";
+      const label = document.createElement("span");
+      label.textContent = `${item.name} (${item.host}:${item.port})`;
+      btn.append(label);
+      btn.addEventListener("click", () => {
+        addressValue = `${item.host}:${item.port}`;
+        addrInput.value = addressValue;
+        codeInput.focus();
+      });
+      nearbyWrap.append(btn);
+    }
+
     const list = document.createElement("div");
     list.className = "list";
     for (const pc of known) {
@@ -42,8 +128,46 @@ export async function mountDevices(root: HTMLElement, onPaired?: () => void): Pr
         void renderHome();
       }));
     }
-    shell.append(title, notice, scan, list);
+    if (known.length > 0 && onPickImages) {
+      const fileInput = document.createElement("input");
+      fileInput.type = "file";
+      fileInput.accept = "image/*";
+      fileInput.multiple = true;
+      fileInput.className = "file";
+      const pickBtn = document.createElement("button");
+      pickBtn.type = "button";
+      pickBtn.className = "primary scan";
+      pickBtn.textContent = en.pickImages;
+      pickBtn.addEventListener("click", () => {
+        fileInput.click();
+      });
+      fileInput.addEventListener("change", () => {
+        const files = Array.from(fileInput.files ?? []);
+        if (files.length === 0) {
+          return;
+        }
+        void filesToBase64(files).then((encoded) => {
+          if (encoded.length > 0) {
+            onPickImages(encoded);
+          }
+        });
+      });
+      shell.append(title, notice, pickBtn, fileInput, scan, codeForm, nearbyWrap, list);
+    } else {
+      shell.append(title, notice, scan, codeForm, nearbyWrap, list);
+    }
     renderLog(shell);
+  }
+
+  async function submitCode(code: string, address: string): Promise<void> {
+    note(en.qrRead);
+    await renderHome();
+    const paired = await finishPair(() => api.pairWithCode(code, address), async () => {
+      await renderHome();
+    });
+    if (paired && onPaired) {
+      onPaired();
+    }
   }
 
   function renderScan(): void {
@@ -106,7 +230,7 @@ export async function mountDevices(root: HTMLElement, onPaired?: () => void): Pr
       document.documentElement.classList.remove("camera-open");
       note(en.qrRead);
       await renderHome();
-      const paired = await finishPair(scanned.content, async () => {
+      const paired = await finishPair(() => api.pairWithQr(scanned.content), async () => {
         await renderHome();
       });
       if (paired && onPaired) {
@@ -129,6 +253,7 @@ export async function mountDevices(root: HTMLElement, onPaired?: () => void): Pr
   }
 
   await renderHome();
+  void refreshNearby();
 }
 
 function pcRow(pc: Destination, refresh: () => void): HTMLElement {
@@ -152,10 +277,13 @@ function pcRow(pc: Destination, refresh: () => void): HTMLElement {
   return row;
 }
 
-async function finishPair(payload: string, refresh: () => Promise<void>): Promise<boolean> {
+async function finishPair(
+  action: () => Promise<PairResult>,
+  refresh: () => Promise<void>,
+): Promise<boolean> {
   let result;
   try {
-    result = await api.pairWithQr(payload);
+    result = await action();
   } catch (error) {
     note(errorText(error));
     await refresh();
@@ -167,6 +295,11 @@ async function finishPair(payload: string, refresh: () => Promise<void>): Promis
     note(en.pairedWith(pc?.name ?? en.knownComputers));
     await refresh();
     return true;
+  }
+  if (result.status === "needs_forget") {
+    note(en.needsForgetOnComputer);
+    await refresh();
+    return false;
   }
   if (result.status === "rejected") {
     note(en.rejected);
@@ -211,6 +344,23 @@ async function finishPair(payload: string, refresh: () => Promise<void>): Promis
 
 function runningInApp(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+async function filesToBase64(files: File[]): Promise<string[]> {
+  const results: string[] = [];
+  for (const file of files) {
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+      reader.onerror = () => reject(new Error("file"));
+      reader.readAsDataURL(file);
+    });
+    const comma = dataUrl.indexOf(",");
+    if (comma >= 0) {
+      results.push(dataUrl.slice(comma + 1));
+    }
+  }
+  return results;
 }
 
 function wait(ms: number): Promise<void> {

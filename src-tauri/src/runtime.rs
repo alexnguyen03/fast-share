@@ -14,7 +14,8 @@ use crate::adapters::{lan_ipv4, FsStore, HostCert, OsClipboard, OsNotifier};
 use crate::domain::{BatchId, DeviceId, HostError, PcId, QrPayload};
 use crate::ports::{Clock, Store, SystemClock};
 use crate::use_cases::{
-    ingest_batch, issue_ticket, pair_status, submit_pair, PairOutcome, PairingTicket,
+    authorize_batch, commit_validated_batch, decode_batch_images, issue_ticket, pair_status,
+    submit_pair, submit_pair_code, PairOutcome, PairingTicket,
 };
 
 fn host_ports() -> std::ops::RangeInclusive<u16> {
@@ -64,17 +65,26 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         .app_data_dir()
         .map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let store = FsStore::open(dir.join("host")).map_err(|error| error.to_string())?;
+    let mut store = FsStore::open(dir.join("host")).map_err(|error| error.to_string())?;
+    let settings = store.load_settings().map_err(|error| error.to_string())?;
+    let _ = crate::use_cases::purge_expired(
+        &mut store,
+        SystemClock.now(),
+        settings.history_retention_days,
+    );
     let cert = crate::adapters::load_or_create(&dir).map_err(|error| error.to_string())?;
     let pc_id = load_pc_id(&dir).map_err(|error| error.to_string())?;
     let phone = load_phone(&dir).map_err(|error| error.to_string())?;
     let known_pcs = load_known_pcs(&dir).map_err(|error| error.to_string())?;
-    let port = bindable_port().ok_or_else(|| "no free LAN port".to_string())?;
+    let is_mobile = cfg!(any(target_os = "ios", target_os = "android"));
+    let bind_ip = lan_ipv4();
+    let port = if is_mobile {
+        0
+    } else {
+        bindable_port(bind_ip).ok_or_else(|| "no free LAN port".to_string())?
+    };
     let ticket = issue_ticket(&SystemClock);
-    let pc_name = store
-        .load_settings()
-        .map(|settings| settings.pc_display_name)
-        .unwrap_or_else(|_| "My PC".to_string());
+    let pc_name = settings.pc_display_name;
     let pc_id_text = pc_id.as_str().to_string();
     let shared = SharedHost(Arc::new(Mutex::new(HostInner {
         store,
@@ -93,20 +103,37 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         data_dir: dir,
     })));
     app.manage(shared.clone());
-    spawn_server(shared, cert, port);
-    if let Err(error) = crate::adapters::advertise(&pc_id_text, &pc_name, port) {
-        eprintln!("fast-share discovery: {error}");
+    if !is_mobile {
+        let cert_fp = cert.fingerprint.clone();
+        spawn_server(shared.clone(), cert, bind_ip, port);
+        spawn_retention_loop(shared);
+        if let Err(error) = crate::adapters::advertise(&pc_id_text, &pc_name, port, &cert_fp) {
+            eprintln!("fast-share discovery: {error}");
+        }
     }
     Ok(())
 }
 
-fn bindable_port() -> Option<u16> {
-    host_ports().find(|port| {
-        std::net::TcpListener::bind(("0.0.0.0", *port)).is_ok()
-    })
+fn bindable_port(bind_ip: std::net::Ipv4Addr) -> Option<u16> {
+    host_ports().find(|port| std::net::TcpListener::bind((bind_ip, *port)).is_ok())
 }
 
-fn spawn_server(shared: SharedHost, cert: HostCert, port: u16) {
+fn spawn_retention_loop(shared: SharedHost) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(3600));
+        if let Ok(mut host) = shared.lock() {
+            if let Ok(settings) = host.store.load_settings() {
+                let _ = crate::use_cases::purge_expired(
+                    &mut host.store,
+                    SystemClock.now(),
+                    settings.history_retention_days,
+                );
+            }
+        }
+    });
+}
+
+fn spawn_server(shared: SharedHost, cert: HostCert, bind_ip: std::net::Ipv4Addr, port: u16) {
     std::thread::spawn(move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -135,11 +162,12 @@ fn spawn_server(shared: SharedHost, cert: HostCert, port: u16) {
             let app = Router::new()
                 .route("/ready", get(ready))
                 .route("/pair", post(pair))
+                .route("/pair/code", post(pair_code))
                 .route("/pair/status", post(status))
                 .route("/batches", post(batches))
                 .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
                 .with_state(shared);
-            let addr = SocketAddr::from(([0, 0, 0, 0], port));
+            let addr = SocketAddr::from((bind_ip, port));
             if let Err(error) = axum_server::bind_rustls(addr, config)
                 .serve(app.into_make_service())
                 .await
@@ -191,6 +219,56 @@ async fn pair(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct PairCodeBody {
+    code: String,
+    device_id: String,
+    name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PairCodeView {
+    status: String,
+    poll_token: Option<String>,
+    secret: Option<String>,
+    pc_id: String,
+    name: String,
+    fingerprint: String,
+    cert_der: String,
+}
+
+async fn pair_code(
+    State(shared): State<SharedHost>,
+    Json(body): Json<PairCodeBody>,
+) -> Result<Json<PairCodeView>, (StatusCode, String)> {
+    let mut host = shared.lock().map_err(storage_status)?;
+    let device_id = DeviceId::parse(body.device_id).map_err(error_status)?;
+    let host = &mut *host;
+    host.refresh_ticket();
+    let outcome = submit_pair_code(
+        &mut host.store,
+        &mut host.ticket,
+        &body.code,
+        device_id,
+        &body.name,
+        Utc::now(),
+    )
+    .map_err(error_status)?;
+    let settings = host.store.load_settings().map_err(error_status)?;
+    let view = view_outcome(outcome);
+    Ok(Json(PairCodeView {
+        status: view.status,
+        poll_token: view.poll_token,
+        secret: view.secret,
+        pc_id: host.pc_id.as_str().to_string(),
+        name: settings.pc_display_name,
+        fingerprint: host.cert.fingerprint.clone(),
+        cert_der: base64::engine::general_purpose::STANDARD.encode(&host.cert.cert_der),
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct StatusBody {
     device_id: String,
     poll_token: String,
@@ -202,7 +280,8 @@ async fn status(
 ) -> Result<Json<PairView>, (StatusCode, String)> {
     let mut host = shared.lock().map_err(storage_status)?;
     let device_id = DeviceId::parse(body.device_id).map_err(error_status)?;
-    let outcome = pair_status(&mut host.store, &device_id, &body.poll_token).map_err(error_status)?;
+    let outcome =
+        pair_status(&mut host.store, &device_id, &body.poll_token).map_err(error_status)?;
     Ok(Json(view_outcome(outcome)))
 }
 
@@ -219,29 +298,42 @@ async fn batches(
     State(shared): State<SharedHost>,
     Json(body): Json<BatchBody>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let mut host = shared.lock().map_err(storage_status)?;
     let device_id = DeviceId::parse(body.device_id).map_err(error_status)?;
     let batch_id = BatchId::parse(&body.batch_id).map_err(error_status)?;
-    let mut images = Vec::new();
-    for encoded in body.images {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .map_err(|_| error_status(HostError::ImageUndecodable))?;
-        images.push(bytes);
+    let image_count = body.images.len();
+    let already_stored = {
+        let host = shared.lock().map_err(storage_status)?;
+        authorize_batch(
+            &host.store,
+            &device_id,
+            &body.secret,
+            &batch_id,
+            image_count,
+        )
+        .map_err(error_status)?
+    };
+    if already_stored {
+        return Ok(Json(
+            serde_json::json!({ "ok": true, "imageCount": image_count }),
+        ));
     }
+    let validated = decode_batch_images(&body.images).map_err(error_status)?;
+    let mut host = shared.lock().map_err(storage_status)?;
     let host = &mut *host;
-    ingest_batch(
+    commit_validated_batch(
         &mut host.store,
         &host.clipboard,
         &host.notifier,
         &device_id,
         &body.secret,
         batch_id,
-        &images,
+        &validated,
         Utc::now(),
     )
     .map_err(error_status)?;
-    Ok(Json(serde_json::json!({ "ok": true, "imageCount": images.len() })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "imageCount": validated.len() }),
+    ))
 }
 
 fn view_outcome(outcome: PairOutcome) -> PairView {
@@ -254,7 +346,7 @@ fn view_outcome(outcome: PairOutcome) -> PairView {
         PairOutcome::Trusted { secret } => PairView {
             status: "trusted".into(),
             poll_token: None,
-            secret: Some(secret),
+            secret,
         },
         PairOutcome::Rejected => PairView {
             status: "rejected".into(),
@@ -315,8 +407,36 @@ impl HostInner {
         })
     }
 
+    pub fn apply_discovered_hosts(
+        &mut self,
+        discovered: &[crate::adapters::DiscoveredHost],
+    ) -> bool {
+        let mut changed = false;
+        for pc in &mut self.known_pcs {
+            if let Some(found) = discovered
+                .iter()
+                .find(|item| item.pc_id == pc.pc_id.as_str())
+            {
+                if crate::domain::require_lan_host(&found.host).is_ok()
+                    && found.port != 0
+                    && (pc.host != found.host || pc.port != found.port)
+                {
+                    pc.host = found.host.clone();
+                    pc.port = found.port;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
     pub fn save_phone_book(&self) -> Result<(), HostError> {
-        write_json(&self.data_dir.join("phone-book.json"), &self.known_pcs)
+        let text = serde_json::to_string_pretty(&self.known_pcs)
+            .map_err(|error| HostError::Storage(error.to_string()))?;
+        crate::adapters::write_private_bytes(
+            &self.data_dir.join("phone-book.json"),
+            text.as_bytes(),
+        )
     }
 
     pub fn set_phone_name(&mut self, name: &str) -> Result<(), HostError> {
@@ -327,7 +447,8 @@ impl HostInner {
 }
 
 pub fn qr_png(payload: &QrPayload) -> Result<Vec<u8>, HostError> {
-    let text = serde_json::to_string(payload).map_err(|error| HostError::Storage(error.to_string()))?;
+    let text =
+        serde_json::to_string(payload).map_err(|error| HostError::Storage(error.to_string()))?;
     let code = qrcode::QrCode::with_error_correction_level(text.as_bytes(), qrcode::EcLevel::L)
         .map_err(|error| HostError::Storage(error.to_string()))?;
     let image = code
@@ -347,7 +468,8 @@ pub fn qr_png(payload: &QrPayload) -> Result<Vec<u8>, HostError> {
 fn load_pc_id(dir: &std::path::Path) -> Result<PcId, HostError> {
     let path = dir.join("pc-id.txt");
     if path.exists() {
-        let text = std::fs::read_to_string(path).map_err(|error| HostError::Storage(error.to_string()))?;
+        let text =
+            std::fs::read_to_string(path).map_err(|error| HostError::Storage(error.to_string()))?;
         return PcId::parse(text.trim());
     }
     let id = PcId::generate();
@@ -358,7 +480,8 @@ fn load_pc_id(dir: &std::path::Path) -> Result<PcId, HostError> {
 fn load_phone(dir: &std::path::Path) -> Result<PhoneIdentity, HostError> {
     let path = dir.join("phone-identity.json");
     if path.exists() {
-        let text = std::fs::read_to_string(path).map_err(|error| HostError::Storage(error.to_string()))?;
+        let text =
+            std::fs::read_to_string(path).map_err(|error| HostError::Storage(error.to_string()))?;
         return serde_json::from_str(&text).map_err(|error| HostError::Storage(error.to_string()));
     }
     let identity = PhoneIdentity {
@@ -374,12 +497,13 @@ fn load_known_pcs(dir: &std::path::Path) -> Result<Vec<KnownPc>, HostError> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let text = std::fs::read_to_string(path).map_err(|error| HostError::Storage(error.to_string()))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|error| HostError::Storage(error.to_string()))?;
     serde_json::from_str(&text).map_err(|error| HostError::Storage(error.to_string()))
 }
 
 fn write_json<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<(), HostError> {
-    let text = serde_json::to_string_pretty(value).map_err(|error| HostError::Storage(error.to_string()))?;
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|error| HostError::Storage(error.to_string()))?;
     std::fs::write(path, text).map_err(|error| HostError::Storage(error.to_string()))
 }
-

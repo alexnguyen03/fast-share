@@ -21,7 +21,30 @@ export async function mountPhones(root: HTMLElement, onBack: () => void): Promis
     image.src = `data:image/png;base64,${status.qrPngBase64}`;
     const caption = document.createElement("p");
     caption.textContent = status.pcName;
-    qr.append(image, caption);
+    const codeLine = document.createElement("p");
+    codeLine.className = "pair-code";
+    codeLine.textContent = `${en.pairCodeLabel}: ${status.pairCode}`;
+    const addrLine = document.createElement("p");
+    addrLine.className = "when";
+    addrLine.textContent = status.lanAddress;
+    qr.append(image, caption, codeLine, addrLine);
+    if (status.firewallWarning) {
+      const warnBox = document.createElement("div");
+      warnBox.className = "dialog";
+      const warnText = document.createElement("p");
+      warnText.textContent = en.firewallPublicWarning;
+      const allowBtn = document.createElement("button");
+      allowBtn.type = "button";
+      allowBtn.className = "primary";
+      allowBtn.textContent = en.allowFirewallButton;
+      allowBtn.addEventListener("click", () => {
+        void api.allowFirewall().then(() => {
+          void mountPhones(root, onBack);
+        });
+      });
+      warnBox.append(warnText, allowBtn);
+      qr.append(warnBox);
+    }
   }
   const list = shell.querySelector<HTMLElement>("[data-list]");
   if (!list) {

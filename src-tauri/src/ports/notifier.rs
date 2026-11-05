@@ -1,14 +1,15 @@
-use crate::domain::HostError;
+use crate::domain::{BatchId, HostError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(not(test), allow(dead_code))]
 pub struct Notice {
+    pub batch_id: BatchId,
     pub title: String,
     pub body: String,
 }
 
 pub trait Notifier: Send {
-    fn notify(&self, title: &str, body: &str) -> Result<(), HostError>;
+    fn notify(&self, batch_id: &BatchId, title: &str, body: &str) -> Result<(), HostError>;
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -33,11 +34,12 @@ impl RecordingNotifier {
 }
 
 impl Notifier for RecordingNotifier {
-    fn notify(&self, title: &str, body: &str) -> Result<(), HostError> {
+    fn notify(&self, batch_id: &BatchId, title: &str, body: &str) -> Result<(), HostError> {
         self.notices
             .lock()
             .map_err(|error| HostError::Storage(error.to_string()))?
             .push(Notice {
+                batch_id: batch_id.clone(),
                 title: title.to_string(),
                 body: body.to_string(),
             });

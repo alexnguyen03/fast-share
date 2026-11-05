@@ -10,9 +10,20 @@ pub struct FsStore {
 
 impl FsStore {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, HostError> {
+        Self::open_at(root, chrono::Utc::now())
+    }
+
+    pub fn open_at(
+        root: impl Into<PathBuf>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Self, HostError> {
         let root = root.into();
-        fs::create_dir_all(root.join("images")).map_err(|error| HostError::Storage(error.to_string()))?;
-        Ok(Self { root })
+        fs::create_dir_all(root.join("images"))
+            .map_err(|error| HostError::Storage(error.to_string()))?;
+        let mut store = Self { root };
+        let settings = store.load_settings()?;
+        crate::use_cases::purge_expired(&mut store, now, settings.history_retention_days)?;
+        Ok(store)
     }
 
     fn settings_path(&self) -> PathBuf {
@@ -60,7 +71,18 @@ impl Store for FsStore {
         }
         let text = fs::read_to_string(self.settings_path())
             .map_err(|error| HostError::Storage(error.to_string()))?;
-        crate::domain::settings_from_json(&text)
+        let raw: serde_json::Value =
+            serde_json::from_str(&text).map_err(|error| HostError::Storage(error.to_string()))?;
+        let settings = crate::domain::settings_from_json(&text)?;
+        let raw_days = raw
+            .get("historyRetentionDays")
+            .and_then(serde_json::Value::as_u64);
+        if raw_days != Some(u64::from(settings.history_retention_days)) {
+            if let Ok(rewritten) = serde_json::to_string_pretty(&settings) {
+                let _ = fs::write(self.settings_path(), rewritten);
+            }
+        }
+        Ok(settings)
     }
 
     fn save_settings(&mut self, settings: &Settings) -> Result<(), HostError> {
@@ -70,7 +92,10 @@ impl Store for FsStore {
     }
 
     fn get_phone(&self, id: &DeviceId) -> Result<Option<PhoneRecord>, HostError> {
-        Ok(self.list_phones()?.into_iter().find(|phone| &phone.id == id))
+        Ok(self
+            .list_phones()?
+            .into_iter()
+            .find(|phone| &phone.id == id))
     }
 
     fn upsert_phone(&mut self, phone: PhoneRecord) -> Result<(), HostError> {
@@ -80,7 +105,7 @@ impl Store for FsStore {
         } else {
             phones.push(phone);
         }
-        write_json(&self.phones_path(), &phones)
+        write_private_json(&self.phones_path(), &phones)
     }
 
     fn list_phones(&self) -> Result<Vec<PhoneRecord>, HostError> {
@@ -129,14 +154,24 @@ fn read_json_or_empty<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Vec
 }
 
 fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), HostError> {
-    let text = serde_json::to_string_pretty(value).map_err(|error| HostError::Storage(error.to_string()))?;
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|error| HostError::Storage(error.to_string()))?;
     fs::write(path, text).map_err(|error| HostError::Storage(error.to_string()))
+}
+
+fn write_private_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<(), HostError> {
+    let text = serde_json::to_string_pretty(value)
+        .map_err(|error| HostError::Storage(error.to_string()))?;
+    super::write_private_bytes(path, text.as_bytes())
 }
 
 #[cfg(test)]
 mod tests {
+    use chrono::TimeZone;
+
     use super::FsStore;
-    use crate::ports::Store;
+    use crate::domain::{BatchId, DeviceId, ImageId};
+    use crate::ports::{HistoryBatch, ImageRecord, Store};
 
     #[test]
     fn client_filenames_never_become_paths() {
@@ -145,6 +180,44 @@ mod tests {
         let error = store.put_image("../secret.png", b"nope").unwrap_err();
         assert!(matches!(error, crate::domain::HostError::Storage(_)));
         assert!(!dir.join("secret.png").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn opening_store_clamps_invalid_retention_and_purges_expired_batches() {
+        let dir = std::env::temp_dir().join(format!("fast-share-open-{}", uuid::Uuid::new_v4()));
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 10, 10, 12, 0, 0)
+            .unwrap();
+        let mut store = FsStore::open_at(&dir, now).unwrap();
+        let image_id = ImageId::generate();
+        let file_name = format!("image-{}.png", image_id.as_str());
+        store.put_image(&file_name, b"png").unwrap();
+        store
+            .insert_batch(HistoryBatch {
+                id: BatchId::generate(),
+                phone_id: DeviceId::generate(),
+                phone_name: "Phone".into(),
+                received_at: now - chrono::Duration::days(8),
+                images: vec![ImageRecord {
+                    id: image_id,
+                    file_name: file_name.clone(),
+                }],
+            })
+            .unwrap();
+        std::fs::write(
+            dir.join("settings.json"),
+            r#"{"historyRetentionDays":999,"pcDisplayName":"Office"}"#,
+        )
+        .unwrap();
+
+        let reopened = FsStore::open_at(&dir, now).unwrap();
+        let settings = reopened.load_settings().unwrap();
+        assert_eq!(settings.history_retention_days, 7);
+        assert!(reopened.list_batches().unwrap().is_empty());
+        assert!(!dir.join("images").join(file_name).exists());
+        let on_disk = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+        assert!(on_disk.contains("\"historyRetentionDays\": 7"));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

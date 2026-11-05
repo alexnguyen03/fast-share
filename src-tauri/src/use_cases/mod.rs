@@ -5,11 +5,13 @@ mod purge_history;
 mod update_settings;
 
 pub use accept_device::{
-    accept_device, forget_device, issue_ticket, pair_status, reject_device, submit_pair, PairOutcome,
-    PairingTicket,
+    accept_device, forget_device, issue_ticket, pair_status, reject_device, submit_pair,
+    submit_pair_code, PairOutcome, PairingTicket,
 };
 pub use copy_image::copy_image;
+#[cfg(test)]
 pub use ingest_batch::ingest_batch;
+pub use ingest_batch::{authorize_batch, commit_validated_batch, decode_batch_images};
 pub use purge_history::{delete_all, delete_image, purge_expired};
 pub use update_settings::update_settings;
 
@@ -79,9 +81,11 @@ mod tests {
         let mut store = MemoryStore::new();
         let error = update_settings(&mut store, r#"{"nope":1}"#, now()).unwrap_err();
         assert_eq!(error, HostError::UnknownSettingsField);
-        let error = update_settings(&mut store, r#"{"historyRetentionDays":0}"#, now()).unwrap_err();
+        let error =
+            update_settings(&mut store, r#"{"historyRetentionDays":0}"#, now()).unwrap_err();
         assert_eq!(error, HostError::InvalidRetention);
-        let error = update_settings(&mut store, r#"{"historyRetentionDays":91}"#, now()).unwrap_err();
+        let error =
+            update_settings(&mut store, r#"{"historyRetentionDays":91}"#, now()).unwrap_err();
         assert_eq!(error, HostError::InvalidRetention);
     }
 
@@ -255,13 +259,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(clipboard.count(), 1);
-        assert_eq!(
-            notifier.bodies()[1],
-            "2 images from Work iPhone."
-        );
+        assert_eq!(notifier.bodies()[1], "2 images from Work iPhone.");
         let batch = &store.list_batches().unwrap()[1];
-        assert!(batch.images.iter().all(|image| image.file_name.starts_with("image-")
-            && image.file_name.ends_with(".png")));
+        assert!(batch.images.iter().all(
+            |image| image.file_name.starts_with("image-") && image.file_name.ends_with(".png")
+        ));
     }
 
     #[test]
@@ -317,8 +319,151 @@ mod tests {
         };
         accept_device(&mut store, &device_id).unwrap();
         let outcome = pair_status(&mut store, &device_id, &poll_token).unwrap();
-        assert!(matches!(outcome, PairOutcome::Trusted { .. }));
+        assert!(matches!(outcome, PairOutcome::Trusted { secret: Some(_) }));
         let error = pair_status(&mut store, &device_id, &poll_token).unwrap_err();
         assert_eq!(error, HostError::UnknownPhone);
+    }
+
+    #[test]
+    fn duplicate_batch_id_is_a_no_op_and_does_not_overwrite_clipboard() {
+        let mut store = MemoryStore::new();
+        let (device_id, secret) = trust_phone(&mut store);
+        let clipboard = RecordingClipboard::new();
+        let notifier = RecordingNotifier::new();
+        let batch_id = crate::domain::BatchId::generate();
+        ingest_batch(
+            &mut store,
+            &clipboard,
+            &notifier,
+            &device_id,
+            &secret,
+            batch_id.clone(),
+            &[tiny_png()],
+            now(),
+        )
+        .unwrap();
+        assert_eq!(clipboard.count(), 1);
+        assert_eq!(notifier.bodies().len(), 1);
+        assert_eq!(store.list_batches().unwrap().len(), 1);
+
+        ingest_batch(
+            &mut store,
+            &clipboard,
+            &notifier,
+            &device_id,
+            &secret,
+            batch_id,
+            &[tiny_png()],
+            now(),
+        )
+        .unwrap();
+        assert_eq!(clipboard.count(), 1);
+        assert_eq!(notifier.bodies().len(), 1);
+        assert_eq!(store.list_batches().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn batch_over_twenty_images_is_rejected_before_decode() {
+        let mut store = MemoryStore::new();
+        let (device_id, secret) = trust_phone(&mut store);
+        let batch_id = crate::domain::BatchId::generate();
+        let error = authorize_batch(&store, &device_id, &secret, &batch_id, 21).unwrap_err();
+        assert_eq!(error, HostError::ImageUndecodable);
+    }
+
+    #[test]
+    fn trusted_device_re_pair_does_not_reissue_secret_or_consume_ticket() {
+        let mut store = MemoryStore::new();
+        let (device_id, _secret) = trust_phone(&mut store);
+        let clock = FixedClock(now());
+        let mut ticket = issue_ticket(&clock);
+        let token = ticket.token.clone();
+        let outcome = submit_pair(
+            &mut store,
+            &mut ticket,
+            &token,
+            device_id,
+            "Work iPhone",
+            now(),
+        )
+        .unwrap();
+        assert_eq!(outcome, PairOutcome::Trusted { secret: None });
+        assert!(!ticket.used);
+
+        let second_device = DeviceId::generate();
+        let second_outcome = submit_pair(
+            &mut store,
+            &mut ticket,
+            &token,
+            second_device,
+            "Second iPhone",
+            now(),
+        )
+        .unwrap();
+        assert!(matches!(second_outcome, PairOutcome::Pending { .. }));
+        assert!(ticket.used);
+    }
+
+    #[test]
+    fn names_with_control_characters_are_rejected_and_bad_settings_clamp_to_default() {
+        let mut store = MemoryStore::new();
+        let error =
+            update_settings(&mut store, "{\"pcDisplayName\":\"Bad\\nName\"}", now()).unwrap_err();
+        assert_eq!(error, HostError::InvalidName);
+        let error = crate::domain::validate_name("Phone\nInjected").unwrap_err();
+        assert_eq!(error, HostError::InvalidName);
+
+        let clamped =
+            settings_from_json(r#"{"historyRetentionDays":0,"pcDisplayName":"Office"}"#).unwrap();
+        assert_eq!(clamped.history_retention_days, 7);
+        let clamped_high =
+            settings_from_json(r#"{"historyRetentionDays":999,"pcDisplayName":"Office"}"#).unwrap();
+        assert_eq!(clamped_high.history_retention_days, 7);
+    }
+
+    #[test]
+    fn six_digit_code_pairs_pending_device_and_cannot_be_replayed() {
+        let mut store = MemoryStore::new();
+        let clock = FixedClock(now());
+        let mut ticket = issue_ticket(&clock);
+        assert_eq!(ticket.code.len(), 6);
+        assert!(ticket.code.chars().all(|c| c.is_ascii_digit()));
+        let code = ticket.code.clone();
+        let device_id = DeviceId::generate();
+
+        let wrong = submit_pair_code(
+            &mut store,
+            &mut ticket,
+            "000000",
+            device_id.clone(),
+            "Android Phone",
+            now(),
+        )
+        .unwrap_err();
+        assert_eq!(wrong, HostError::PairingExpired);
+        assert!(!ticket.used);
+
+        let outcome = submit_pair_code(
+            &mut store,
+            &mut ticket,
+            &code,
+            device_id.clone(),
+            "Android Phone",
+            now(),
+        )
+        .unwrap();
+        assert!(matches!(outcome, PairOutcome::Pending { .. }));
+        assert!(ticket.used);
+
+        let replay = submit_pair_code(
+            &mut store,
+            &mut ticket,
+            &code,
+            device_id,
+            "Android Phone",
+            now(),
+        )
+        .unwrap_err();
+        assert_eq!(replay, HostError::PairingExpired);
     }
 }

@@ -7,9 +7,11 @@ mod os_notifier;
 pub mod phone_client;
 pub mod shared_images;
 
-pub use cert::{fingerprint, load_or_create, HostCert};
+pub use cert::{fingerprint, load_or_create, write_private_bytes, HostCert};
 pub use fs_store::FsStore;
-pub use lan::lan_ipv4;
-pub use mdns::{advertise, browse_ids};
+pub use lan::{
+    allow_in_firewall, classify_unreachable, firewall_warning, lan_ipv4, ReachabilityReason,
+};
+pub use mdns::{advertise, browse_hosts, DiscoveredHost};
 pub use os_clipboard::OsClipboard;
 pub use os_notifier::OsNotifier;
