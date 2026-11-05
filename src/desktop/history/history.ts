@@ -3,24 +3,59 @@ import { en } from "../../shared/locales/en";
 import { mountPhones } from "../devices/devices";
 import { mountSettings } from "../settings/settings";
 
+const imageCache = new Map<string, string>();
+
+async function loadPng(imageId: string): Promise<string> {
+  const cached = imageCache.get(imageId);
+  if (cached) {
+    return cached;
+  }
+  const png = await api.getHistoryImage(imageId);
+  if (png) {
+    imageCache.set(imageId, png);
+  }
+  return png;
+}
+
 export async function mountDesktop(root: HTMLElement): Promise<void> {
   let batches = await api.listHistory();
   let status = await api.hostStatus();
   let batchIndex = 0;
   let imageIndex = 0;
-  const unlisten = await api.onHistoryFocus(() => {
-    void reload();
+  let active = true;
+  const unlisten = await api.onHistoryFocus((targetBatchId) => {
+    void reload(targetBatchId);
   });
 
-  async function reload(): Promise<void> {
+  function cleanup(): void {
+    if (!active) {
+      return;
+    }
+    active = false;
+    window.removeEventListener("keydown", onKey);
+    unlisten();
+  }
+
+  async function reload(targetBatchId?: string): Promise<void> {
+    if (!active) {
+      return;
+    }
     batches = await api.listHistory();
     status = await api.hostStatus();
-    batchIndex = 0;
+    if (targetBatchId) {
+      const found = batches.findIndex((item) => item.id === targetBatchId);
+      batchIndex = found >= 0 ? found : 0;
+    } else {
+      batchIndex = 0;
+    }
     imageIndex = 0;
     paint();
   }
 
   function paint(): void {
+    if (!active) {
+      return;
+    }
     const shell = document.createElement("section");
     shell.className = "panel desktop";
     shell.innerHTML = `
@@ -62,7 +97,8 @@ export async function mountDesktop(root: HTMLElement): Promise<void> {
         if (!image) {
           return;
         }
-        void api.deleteHistoryImage(image.id).then(reload);
+        imageCache.delete(image.id);
+        void api.deleteHistoryImage(image.id).then(() => reload());
       }));
       const older = batches.filter((_, index) => index !== batchIndex);
       if (older.length > 0) {
@@ -82,8 +118,7 @@ export async function mountDesktop(root: HTMLElement): Promise<void> {
         });
       }
     }
-    const pending = status.pending[0];
-    if (pending) {
+    for (const pending of status.pending) {
       body.append(pendingDialog(pending.name, async (accepted) => {
         if (accepted) {
           await api.acceptPhone(pending.id);
@@ -94,11 +129,13 @@ export async function mountDesktop(root: HTMLElement): Promise<void> {
       }));
     }
     shell.querySelector("[data-action=phones]")?.addEventListener("click", () => {
+      cleanup();
       void mountPhones(root, () => {
         void mountDesktop(root);
       });
     });
     retention.addEventListener("click", () => {
+      cleanup();
       void mountSettings(root, () => {
         void mountDesktop(root);
       });
@@ -107,7 +144,8 @@ export async function mountDesktop(root: HTMLElement): Promise<void> {
       if (!window.confirm(en.deleteAllConfirm)) {
         return;
       }
-      void api.deleteHistory().then(reload);
+      imageCache.clear();
+      void api.deleteHistory().then(() => reload());
     });
   }
 
@@ -128,16 +166,13 @@ export async function mountDesktop(root: HTMLElement): Promise<void> {
       void api.openHistoryImage(image.id);
     }
     if (event.key === "Delete") {
-      void api.deleteHistoryImage(image.id).then(reload);
+      imageCache.delete(image.id);
+      void api.deleteHistoryImage(image.id).then(() => reload());
     }
   }
 
   window.addEventListener("keydown", onKey);
   paint();
-  root.addEventListener("fast-share-unmount", () => {
-    window.removeEventListener("keydown", onKey);
-    void unlisten();
-  }, { once: true });
 }
 
 function latest(
@@ -159,7 +194,13 @@ function latest(
   const picture = document.createElement("img");
   picture.className = "hero";
   picture.alt = en.image;
-  picture.src = image ? `data:image/png;base64,${image.pngBase64}` : "";
+  if (image) {
+    void loadPng(image.id).then((png) => {
+      if (png) {
+        picture.src = `data:image/png;base64,${png}`;
+      }
+    });
+  }
   const thumbs = document.createElement("div");
   thumbs.className = "thumbs";
   batch.images.forEach((item, index) => {
@@ -188,13 +229,6 @@ function earlierRow(batch: HistoryBatch, onOpen: () => void): HTMLButtonElement 
   const button = document.createElement("button");
   button.type = "button";
   button.className = "earlier-row";
-  const preview = batch.images[0];
-  if (preview) {
-    const img = document.createElement("img");
-    img.alt = en.image;
-    img.src = `data:image/png;base64,${preview.pngBase64}`;
-    button.append(img);
-  }
   const title = document.createElement("span");
   title.textContent = en.fromPhone(batch.images.length, batch.phoneName);
   const when = document.createElement("span");
@@ -241,7 +275,11 @@ function thumb(image: HistoryImage, selected: boolean, onSelect: () => void): HT
   button.className = selected ? "thumb selected" : "thumb";
   const img = document.createElement("img");
   img.alt = en.image;
-  img.src = `data:image/png;base64,${image.pngBase64}`;
+  void loadPng(image.id).then((png) => {
+    if (png) {
+      img.src = `data:image/png;base64,${png}`;
+    }
+  });
   button.append(img);
   button.addEventListener("click", onSelect);
   return button;

@@ -26,6 +26,7 @@ macro_rules! id_type {
                 }
             }
 
+            #[cfg_attr(not(test), allow(dead_code))]
             pub fn generate() -> Self {
                 Self(uuid::Uuid::new_v4().to_string())
             }

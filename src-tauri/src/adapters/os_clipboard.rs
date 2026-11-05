@@ -16,8 +16,8 @@ impl Clipboard for OsClipboard {
                 height,
                 bytes: std::borrow::Cow::Owned(rgba.into_raw()),
             };
-            let mut clipboard = arboard::Clipboard::new()
-                .map_err(|error| HostError::Storage(error.to_string()))?;
+            let mut clipboard =
+                arboard::Clipboard::new().map_err(|error| HostError::Storage(error.to_string()))?;
             clipboard
                 .set_image(clipboard_image)
                 .map_err(|error| HostError::Storage(error.to_string()))?;

@@ -3,7 +3,11 @@ use chrono::{DateTime, Duration, Utc};
 use crate::domain::{HostError, ImageId};
 use crate::ports::Store;
 
-pub fn purge_expired(store: &mut impl Store, now: DateTime<Utc>, retention_days: u32) -> Result<usize, HostError> {
+pub fn purge_expired(
+    store: &mut impl Store,
+    now: DateTime<Utc>,
+    retention_days: u32,
+) -> Result<usize, HostError> {
     let cutoff = now - Duration::days(i64::from(retention_days));
     let batches = store.list_batches()?;
     let mut removed = 0;

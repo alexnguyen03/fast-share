@@ -13,7 +13,7 @@ type Options = {
   drafts: Draft[];
   onClose: () => void;
   onSwitch: () => void;
-  onSend: (images: string[]) => Promise<void>;
+  onSend: (batchId: string, images: string[]) => Promise<void>;
 };
 
 export function mountEditor(root: HTMLElement, options: Options): void {
@@ -25,6 +25,7 @@ export function mountEditor(root: HTMLElement, options: Options): void {
   let current: Mark | null = null;
   let viewRect = { x: 0, y: 0, w: 1, h: 1 };
   let image = new Image();
+  let pendingBatchId: string | null = null;
 
   const shell = document.createElement("section");
   shell.className = "panel editor";
@@ -307,12 +308,15 @@ export function mountEditor(root: HTMLElement, options: Options): void {
   async function send(): Promise<void> {
     sendControl.disabled = true;
     statusLine.textContent = "";
+    const batchId = pendingBatchId ?? newBatchId();
+    pendingBatchId = batchId;
     try {
       const images: string[] = [];
       for (const item of options.drafts) {
         images.push(await exportDraft(item));
       }
-      await options.onSend(images);
+      await options.onSend(batchId, images);
+      pendingBatchId = null;
     } catch (error) {
       statusLine.textContent = error instanceof Error ? error.message : en.didNotReceive(options.pcName);
       sendControl.disabled = false;
@@ -474,6 +478,13 @@ function cropCanvas(source: HTMLCanvasElement, crop: Extract<Mark, { tool: "crop
   output.height = Math.max(1, Math.round(sh));
   output.getContext("2d")?.drawImage(source, sx, sy, sw, sh, 0, 0, output.width, output.height);
   return output;
+}
+
+function newBatchId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `batch-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {

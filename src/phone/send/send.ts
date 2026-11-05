@@ -4,13 +4,38 @@ import { mountDevices } from "../devices/devices";
 import { mountEditor, type Draft } from "../editor/editor";
 import { errorText, note } from "../log";
 
+let inboxBound = false;
+
 export async function mountPhone(root: HTMLElement): Promise<void> {
-  const shared = await api.takeSharedImages();
+  if (!inboxBound) {
+    inboxBound = true;
+    window.addEventListener("fast-share-inbox", () => {
+      void mountPhone(root);
+    });
+  }
+  let shared: string[] = [];
+  try {
+    shared = await api.takeSharedImages();
+  } catch (error) {
+    note(errorText(error));
+  }
   if (shared.length === 0) {
-    await mountDevices(root);
+    await mountDevices(
+      root,
+      () => {
+        void mountPhone(root);
+      },
+      (pickedBase64) => {
+        void openDrafts(root, pickedBase64);
+      },
+    );
     return;
   }
-  const drafts: Draft[] = shared.map((pngBase64, index) => ({
+  await openDrafts(root, shared);
+}
+
+export async function openDrafts(root: HTMLElement, imagesBase64: string[]): Promise<void> {
+  const drafts: Draft[] = imagesBase64.map((pngBase64, index) => ({
     id: `draft-${index}`,
     pngBase64,
     marks: [],
@@ -19,9 +44,25 @@ export async function mountPhone(root: HTMLElement): Promise<void> {
 }
 
 async function chooseDestination(root: HTMLElement, drafts: Draft[]): Promise<void> {
+  const known = await api.listKnownPcs();
+  if (known.length === 1) {
+    openEditor(root, drafts, { ...known[0], online: true }, known);
+    void api.discoverDestinations().then((discovered) => {
+      const updated = discovered.find((item) => item.pcId === known[0].pcId);
+      const dot = root.querySelector<HTMLElement>(".editor .dot");
+      if (dot && updated) {
+        dot.classList.toggle("on", updated.online);
+      }
+    });
+    return;
+  }
   const destinations = await api.discoverDestinations();
   const online = destinations.filter((pc) => pc.online);
   if (online.length === 0) {
+    if (known.length > 0) {
+      openEditor(root, drafts, known[0], known);
+      return;
+    }
     showOffline(root, drafts);
     return;
   }
@@ -83,17 +124,24 @@ function openEditor(root: HTMLElement, drafts: Draft[], pc: Destination, all: De
       });
     },
     onSwitch: () => showSheet(root, drafts, all.filter((item) => item.online), all),
-    onSend: async (images) => {
+    onSend: async (batchId, images) => {
       try {
-      await api.sendBatch(pc.pcId, images);
+      await api.sendBatch(pc.pcId, batchId, images);
       note(en.sentTo(pc.name));
       const shell = document.createElement("section");
-        shell.className = "panel";
-        const message = document.createElement("p");
-        message.className = "status show";
-        message.textContent = images.length === 1 ? `${en.sentTo(pc.name)} ${en.pasteReady}` : en.sentTo(pc.name);
-        shell.append(message);
-        root.replaceChildren(shell);
+      shell.className = "panel phone";
+      const message = document.createElement("p");
+      message.className = "status show";
+      message.textContent = images.length === 1 ? `${en.sentTo(pc.name)} ${en.pasteReady}` : en.sentTo(pc.name);
+      const backBtn = document.createElement("button");
+      backBtn.type = "button";
+      backBtn.className = "primary scan";
+      backBtn.textContent = en.back;
+      backBtn.addEventListener("click", () => {
+        void mountPhone(root);
+      });
+      shell.append(message, backBtn);
+      root.replaceChildren(shell);
       } catch (error) {
         const message = errorText(error);
         note(message || en.didNotReceive(pc.name));

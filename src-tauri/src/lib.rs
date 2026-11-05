@@ -22,9 +22,9 @@ pub fn run() {
         .setup(|app| {
             #[cfg(mobile)]
             app.handle().plugin(tauri_plugin_barcode_scanner::init())?;
-            runtime::start(app.handle().clone()).map_err(|error| -> Box<dyn std::error::Error> {
-                std::io::Error::other(error).into()
-            })?;
+            runtime::start(app.handle().clone()).map_err(
+                |error| -> Box<dyn std::error::Error> { std::io::Error::other(error).into() },
+            )?;
             #[cfg(not(any(target_os = "ios", target_os = "android")))]
             {
                 let open = tauri::menu::MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;

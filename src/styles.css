@@ -14,7 +14,17 @@ body {
 }
 
 #app, .panel {
-  min-height: 100vh;
+  min-height: 100%;
+}
+
+html.phone,
+html.phone body,
+html.phone #app {
+  height: 100%;
+}
+
+html.phone .panel {
+  min-height: 100%;
 }
 
 .panel {
@@ -165,10 +175,16 @@ html.phone.camera-open .panel > :not(.scan-hole) {
   padding: 0 16px;
 }
 
+html.phone .panel,
+html.phone .editor {
+  padding-top: max(56px, calc(16px + env(safe-area-inset-top, 0px)));
+  padding-bottom: max(28px, calc(16px + env(safe-area-inset-bottom, 0px)));
+}
+
 .editor {
   max-width: none;
   gap: 0;
-  padding: 14px 14px 20px;
+  padding: 56px 14px 28px;
   background: #0e1014;
 }
 .editor-top {
@@ -478,3 +494,26 @@ html.desktop .foot .text {
   padding: 8px 0;
 }
 html.desktop .qr img { width: 180px; height: 180px; }
+.pair-code {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-align: center;
+  margin-top: 4px;
+}
+.code-form .row {
+  display: flex;
+  gap: 8px;
+}
+.code-form .row input {
+  flex: 1;
+  min-width: 0;
+  letter-spacing: 0.14em;
+  font-weight: 650;
+  text-align: center;
+}
+.code-form input {
+  min-height: 44px;
+  border-radius: 999px;
+  padding: 0 14px;
+}

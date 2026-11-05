@@ -23,8 +23,7 @@ pub struct QrPayload {
 }
 
 pub fn parse_qr(text: &str) -> Result<QrPayload, HostError> {
-    let payload: QrPayload =
-        serde_json::from_str(text).map_err(|_| HostError::PairingExpired)?;
+    let payload: QrPayload = serde_json::from_str(text).map_err(|_| HostError::PairingExpired)?;
     if payload.v != 1 {
         return Err(HostError::PairingExpired);
     }

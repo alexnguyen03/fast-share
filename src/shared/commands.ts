@@ -14,13 +14,23 @@ export type HostStatus = {
   pcName: string;
   retentionDays: number;
   qrPngBase64: string;
+  pairCode: string;
+  lanAddress: string;
+  firewallWarning: string | null;
   pending: PhoneView[];
   trustedCount: number;
 };
 
+export type NearbyPc = {
+  pcId: string;
+  name: string;
+  host: string;
+  port: number;
+  paired: boolean;
+};
+
 export type HistoryImage = {
   id: string;
-  pngBase64: string;
 };
 
 export type HistoryBatch = {
@@ -37,13 +47,14 @@ export type Destination = {
 };
 
 export type PairResult = {
-  status: "pending" | "trusted" | "rejected";
+  status: "pending" | "trusted" | "rejected" | "needs_forget";
 };
 
 type Preview = {
   settings: Settings;
   phones: PhoneView[];
   history: HistoryBatch[];
+  images: Record<string, string>;
   destinations: Destination[];
   paired: boolean;
 };
@@ -55,6 +66,7 @@ const preview: Preview = {
     { id: "phone-new-1", name: "Kitchen iPhone", trust: "pending" },
   ],
   history: [],
+  images: {},
   destinations: [
     { pcId: "pc-office-1", name: "Office PC", online: true },
     { pcId: "pc-home-1", name: "Home laptop", online: true },
@@ -104,21 +116,23 @@ async function ensurePreview(): Promise<void> {
   }
   const first = await samplePng("Screenshot", "#e23d3d");
   const second = await samplePng("Second", "#6ea8fe");
+  preview.images = {
+    "image-a": first,
+    "image-b": second,
+    "image-c": first,
+  };
   preview.history = [
     {
       id: "batch-new",
       phoneName: "Work iPhone",
       receivedAt: new Date().toISOString(),
-      images: [
-        { id: "image-a", pngBase64: first },
-        { id: "image-b", pngBase64: second },
-      ],
+      images: [{ id: "image-a" }, { id: "image-b" }],
     },
     {
       id: "batch-old",
       phoneName: "Work iPhone",
       receivedAt: new Date(Date.now() - 86_400_000).toISOString(),
-      images: [{ id: "image-c", pngBase64: first }],
+      images: [{ id: "image-c" }],
     },
   ];
 }
@@ -140,11 +154,21 @@ export const api = {
         pcName: preview.settings.pcDisplayName,
         retentionDays: preview.settings.historyRetentionDays,
         qrPngBase64: await samplePng("QR", "#f4f7fb"),
+        pairCode: "482910",
+        lanAddress: "192.168.1.24:47654",
+        firewallWarning: null,
         pending: preview.phones.filter((phone) => phone.trust === "pending"),
         trustedCount: preview.phones.filter((phone) => phone.trust === "trusted").length,
       };
     }
     return invoke<HostStatus>("host_status");
+  },
+
+  allowFirewall(): Promise<void> {
+    if (!inTauri()) {
+      return Promise.resolve();
+    }
+    return invoke("allow_firewall");
   },
 
   listPhones(): Promise<PhoneView[]> {
@@ -190,6 +214,14 @@ export const api = {
       return preview.history;
     }
     return invoke<HistoryBatch[]>("list_history");
+  },
+
+  async getHistoryImage(imageId: string): Promise<string> {
+    if (!inTauri()) {
+      await ensurePreview();
+      return preview.images[imageId] ?? "";
+    }
+    return invoke<string>("get_history_image", { imageId });
   },
 
   copyHistoryImage(imageId: string): Promise<void> {
@@ -274,6 +306,26 @@ export const api = {
     return invoke<PairResult>("pair_with_qr", { payload });
   },
 
+  pairWithCode(code: string, address?: string): Promise<PairResult> {
+    if (!inTauri()) {
+      if (code.trim().length !== 6) {
+        return Promise.reject(new Error(en.rejected));
+      }
+      preview.paired = true;
+      return Promise.resolve({ status: "trusted" });
+    }
+    return invoke<PairResult>("pair_with_code", { code, address: address?.trim() || null });
+  },
+
+  discoverNearbyPcs(): Promise<NearbyPc[]> {
+    if (!inTauri()) {
+      return Promise.resolve([
+        { pcId: "pc-office-1", name: "Office PC", host: "192.168.1.24", port: 47654, paired: true },
+      ]);
+    }
+    return invoke<NearbyPc[]>("discover_nearby_pcs");
+  },
+
   pollPair(pcId: string): Promise<PairResult> {
     if (!inTauri()) {
       return Promise.resolve({ status: preview.paired ? "trusted" : "pending" });
@@ -289,21 +341,30 @@ export const api = {
     return invoke("forget_pc", { pcId });
   },
 
-  sendBatch(pcId: string, images: string[]): Promise<void> {
+  sendBatch(pcId: string, batchId: string, images: string[]): Promise<void> {
     if (!inTauri()) {
       if (!preview.destinations.some((pc) => pc.pcId === pcId && pc.online)) {
         return Promise.reject(new Error(en.offline));
       }
       return Promise.resolve();
     }
-    return invoke("send_batch", { pcId, images });
+    return invoke("send_batch", { pcId, batchId, images });
   },
 
-  async onHistoryFocus(refresh: () => void): Promise<() => void> {
+  async onHistoryFocus(refresh: (batchId?: string) => void): Promise<() => void> {
     if (!inTauri()) {
       return () => undefined;
     }
     const { listen } = await import("@tauri-apps/api/event");
-    return listen("history-focus", () => refresh());
+    const unlistenFocus = await listen<string>("history-focus", (event) => {
+      refresh(typeof event.payload === "string" && event.payload.length > 0 ? event.payload : undefined);
+    });
+    const unlistenUpdated = await listen<string>("history-updated", () => {
+      refresh();
+    });
+    return () => {
+      unlistenFocus();
+      unlistenUpdated();
+    };
   },
 };

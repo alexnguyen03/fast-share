@@ -5,8 +5,10 @@ use image::{ImageReader, Limits};
 use super::error::HostError;
 
 pub const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+pub const MAX_BATCH_IMAGES: usize = 20;
 const MAX_DIMENSION: u32 = 8_192;
 
+#[derive(Clone, Debug)]
 pub struct ValidImage {
     pub png: Vec<u8>,
 }

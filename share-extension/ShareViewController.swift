@@ -49,12 +49,19 @@ final class ShareViewController: UIViewController {
                     continuation.resume(returning: nil)
                     return
                 }
-                let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension
-                let name = "shared-\(index).\(ext)"
+                let name = "shared-\(index).jpg"
                 let destination = inbox.appendingPathComponent(name)
                 try? FileManager.default.removeItem(at: destination)
+                guard
+                    let data = try? Data(contentsOf: url),
+                    let image = UIImage(data: data),
+                    let jpeg = image.jpegData(compressionQuality: 0.92)
+                else {
+                    continuation.resume(returning: nil)
+                    return
+                }
                 do {
-                    try FileManager.default.copyItem(at: url, to: destination)
+                    try jpeg.write(to: destination, options: .atomic)
                     continuation.resume(returning: name)
                 } catch {
                     continuation.resume(returning: nil)
