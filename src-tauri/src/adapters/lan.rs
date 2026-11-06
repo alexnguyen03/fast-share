@@ -164,6 +164,50 @@ pub fn allow_in_firewall(port: u16) -> Result<(), String> {
     }
 }
 
+pub fn set_os_auto_start(enabled: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let exe_path = format!("\"{}\"", exe.to_string_lossy());
+        if enabled {
+            let _ = Command::new("reg")
+                .creation_flags(CREATE_NO_WINDOW)
+                .args([
+                    "add",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "/v",
+                    "FastShare",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    &exe_path,
+                    "/f",
+                ])
+                .status();
+        } else {
+            let _ = Command::new("reg")
+                .creation_flags(CREATE_NO_WINDOW)
+                .args([
+                    "delete",
+                    r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                    "/v",
+                    "FastShare",
+                    "/f",
+                ])
+                .status();
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = enabled;
+    }
+}
+
 fn is_virtual_adapter(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     ["docker", "vethernet", "vmnet", "vbox", "br-"]

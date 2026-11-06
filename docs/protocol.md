@@ -70,7 +70,7 @@ Each field has a default. An older file that lacks a new field still loads. A se
 
 The first field is `historyRetentionDays` in the JSON file (`history_retention_days` in Rust). The default is 7. Allowed values are 1 through 90. Expired batches are purged when the store opens and periodically while the desktop host runs. Lowering the value deletes images older than the new limit immediately. Raising it deletes nothing. If `settings.json` on disk has an out-of-range value, loading clamps it back to 7 and rewrites the file.
 
-`pcDisplayName` defaults to `My PC`. A patch may send either field. Unknown keys are rejected. Loading an older file still fills missing fields from the defaults and ignores keys this version does not know.
+`pcDisplayName` defaults to `My PC`. Boolean settings include `autoStartWithOs` (default `false`), `closeToTray` (default `true`), and `autoCopyToClipboard` (default `true`). A patch may send any subset of these fields. Unknown keys are rejected. Loading an older file still fills missing fields from the defaults and ignores keys this version does not know.
 
 ## UI copy
 

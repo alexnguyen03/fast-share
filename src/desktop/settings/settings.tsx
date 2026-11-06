@@ -4,9 +4,12 @@ import { api } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
 import type { Settings } from "../../shared/settings";
 import { Button } from "../../shared/ui/button";
+import { Card } from "../../shared/ui/card";
+import { Checkbox } from "../../shared/ui/checkbox";
 import { Input } from "../../shared/ui/input";
 import { Label } from "../../shared/ui/label";
 import { getOrCreateRoot } from "../../shared/ui/render";
+import { showToast } from "../../shared/ui/toast";
 import { DesktopFrame } from "../frame";
 
 function DesktopSettingsScreen({
@@ -20,6 +23,15 @@ function DesktopSettingsScreen({
   const [retentionDays, setRetentionDays] = React.useState(
     String(initialSettings.historyRetentionDays),
   );
+  const [autoStartWithOs, setAutoStartWithOs] = React.useState<boolean>(
+    initialSettings.autoStartWithOs ?? false,
+  );
+  const [closeToTray, setCloseToTray] = React.useState<boolean>(
+    initialSettings.closeToTray ?? true,
+  );
+  const [autoCopyToClipboard, setAutoCopyToClipboard] = React.useState<boolean>(
+    initialSettings.autoCopyToClipboard ?? true,
+  );
   const [statusText, setStatusText] = React.useState("");
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
@@ -29,8 +41,14 @@ function DesktopSettingsScreen({
       .updateSettings({
         pcDisplayName: pcName.trim(),
         historyRetentionDays: retention,
+        autoStartWithOs,
+        closeToTray,
+        autoCopyToClipboard,
       })
-      .then(() => onBack())
+      .then(() => {
+        showToast(en.settingsSaved);
+        onBack();
+      })
       .catch((error: unknown) => {
         setStatusText(error instanceof Error ? error.message : en.settings);
       });
@@ -47,13 +65,16 @@ function DesktopSettingsScreen({
         >
           <ChevronLeft className="h-5 w-5" />
         </Button>
-        <h1 className="m-0 text-center text-[1.12rem] font-semibold text-[#161a1d]">
+        <h1 className="m-0 text-center text-[1.12rem] font-semibold text-foreground">
           {en.settings}
         </h1>
         <span className="w-9" />
       </header>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3.5 pt-2">
+      <form
+        onSubmit={handleSubmit}
+        className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto pt-2"
+      >
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="pcDisplayName">{en.pcName}</Label>
           <Input
@@ -80,12 +101,62 @@ function DesktopSettingsScreen({
           />
         </div>
 
+        <Card className="flex flex-col gap-3 bg-muted p-3.5">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setAutoCopyToClipboard((prev) => !prev)}
+            className="flex cursor-pointer items-center justify-between gap-3"
+          >
+            <span className="text-sm font-medium text-foreground">
+              {en.autoCopyToClipboard}
+            </span>
+            <Checkbox
+              checked={autoCopyToClipboard}
+              onCheckedChange={(v) => setAutoCopyToClipboard(Boolean(v))}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setCloseToTray((prev) => !prev)}
+            className="flex cursor-pointer items-center justify-between gap-3"
+          >
+            <span className="text-sm font-medium text-foreground">
+              {en.closeToTray}
+            </span>
+            <Checkbox
+              checked={closeToTray}
+              onCheckedChange={(v) => setCloseToTray(Boolean(v))}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setAutoStartWithOs((prev) => !prev)}
+            className="flex cursor-pointer items-center justify-between gap-3"
+          >
+            <span className="text-sm font-medium text-foreground">
+              {en.autoStartWithOs}
+            </span>
+            <Checkbox
+              checked={autoStartWithOs}
+              onCheckedChange={(v) => setAutoStartWithOs(Boolean(v))}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </Card>
+
         <Button type="submit" variant="default" className="mt-1 w-full">
           {en.save}
         </Button>
 
         {statusText ? (
-          <p className="text-sm text-[#e23d3d]">{statusText}</p>
+          <p className="text-sm text-destructive">{statusText}</p>
         ) : null}
       </form>
     </DesktopFrame>

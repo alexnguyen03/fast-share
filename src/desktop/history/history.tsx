@@ -1,5 +1,9 @@
 import * as React from "react";
-import { Settings as SettingsIcon, Smartphone } from "lucide-react";
+import {
+  Check,
+  Settings as SettingsIcon,
+  Smartphone,
+} from "lucide-react";
 import { api, type HistoryBatch, type HostStatus } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
 import { cn } from "../../shared/lib/utils";
@@ -26,6 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../shared/ui/select";
+import { showToast } from "../../shared/ui/toast";
 import { mountPhones } from "../devices/devices";
 import { DesktopFrame } from "../frame";
 import { mountSettings } from "../settings/settings";
@@ -37,6 +42,12 @@ type FlatItem = {
   batchId: string;
   phoneName: string;
   receivedAt: string;
+  timeGroup: string;
+};
+
+type TimeGroupSection = {
+  label: string;
+  items: FlatItem[];
 };
 
 async function loadPng(imageId: string): Promise<string> {
@@ -49,24 +60,6 @@ async function loadPng(imageId: string): Promise<string> {
     imageCache.set(imageId, png);
   }
   return png;
-}
-
-function flattenBatches(batches: HistoryBatch[], deviceFilter: string): FlatItem[] {
-  const items: FlatItem[] = [];
-  for (const batch of batches) {
-    if (deviceFilter !== "all" && batch.phoneName !== deviceFilter) {
-      continue;
-    }
-    for (const img of batch.images) {
-      items.push({
-        imageId: img.id,
-        batchId: batch.id,
-        phoneName: batch.phoneName,
-        receivedAt: batch.receivedAt,
-      });
-    }
-  }
-  return items;
 }
 
 export function relativeTime(iso: string): string {
@@ -84,16 +77,51 @@ export function relativeTime(iso: string): string {
   return en.daysAgo(Math.round(hours / 24));
 }
 
+function flattenAndGroup(
+  batches: HistoryBatch[],
+  deviceFilter: string,
+): { flat: FlatItem[]; groups: TimeGroupSection[] } {
+  const flat: FlatItem[] = [];
+  const groups: TimeGroupSection[] = [];
+  for (const batch of batches) {
+    if (deviceFilter !== "all" && batch.phoneName !== deviceFilter) {
+      continue;
+    }
+    const label = relativeTime(batch.receivedAt);
+    for (const img of batch.images) {
+      const item: FlatItem = {
+        imageId: img.id,
+        batchId: batch.id,
+        phoneName: batch.phoneName,
+        receivedAt: batch.receivedAt,
+        timeGroup: label,
+      };
+      flat.push(item);
+      const lastGroup = groups[groups.length - 1];
+      if (lastGroup && lastGroup.label === label) {
+        lastGroup.items.push(item);
+      } else {
+        groups.push({ label, items: [item] });
+      }
+    }
+  }
+  return { flat, groups };
+}
+
 function HistoryTile({
   item,
   selected,
   selectMode,
+  justCopied,
+  showDeviceName,
   onSelect,
   onOpen,
 }: {
   item: FlatItem;
   selected: boolean;
   selectMode: boolean;
+  justCopied: boolean;
+  showDeviceName: boolean;
   onSelect: () => void;
   onOpen: () => void;
 }): React.JSX.Element {
@@ -115,7 +143,7 @@ function HistoryTile({
     <Card
       role="button"
       tabIndex={0}
-      title={`${item.phoneName} · ${relativeTime(item.receivedAt)}`}
+      title={`${item.phoneName} · ${item.timeGroup}`}
       onClick={onSelect}
       onDoubleClick={onOpen}
       className={cn(
@@ -123,7 +151,7 @@ function HistoryTile({
         selected && "bg-[#dff2e7]",
       )}
     >
-      <div className="grid aspect-[1.15/1] w-full place-items-center overflow-hidden rounded-[4px] bg-white">
+      <div className="relative grid aspect-[1.15/1] w-full place-items-center overflow-hidden rounded-lg bg-white">
         {src ? (
           <img
             src={src}
@@ -131,21 +159,33 @@ function HistoryTile({
             className="block h-full w-full object-cover"
           />
         ) : null}
+
+        {justCopied ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/50 text-white backdrop-blur-[1px]">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground">
+              <Check className="h-5 w-5 stroke-[2.8]" />
+            </div>
+            <span className="text-xs font-semibold">{en.copy}</span>
+          </div>
+        ) : null}
       </div>
+
       {selectMode ? (
         <div
-          className="pointer-events-none absolute top-3 right-3"
+          className="pointer-events-none absolute top-3.5 right-3.5"
           aria-hidden="true"
         >
           <Checkbox checked={selected} />
         </div>
       ) : null}
-      <div className="flex items-center justify-between gap-1 text-[0.74rem] text-[#556068]">
-        <span className="truncate font-medium text-[#262c30]">
-          {item.phoneName}
-        </span>
-        <span className="shrink-0">{relativeTime(item.receivedAt)}</span>
-      </div>
+
+      {showDeviceName ? (
+        <div className="flex items-center px-0.5 text-[0.75rem]">
+          <span className="truncate font-medium text-[#262c30]">
+            {item.phoneName}
+          </span>
+        </div>
+      ) : null}
     </Card>
   );
 }
@@ -166,9 +206,20 @@ function DesktopHistoryScreen({
   const [deviceFilter, setDeviceFilter] = React.useState<string>("all");
   const [selectMode, setSelectMode] = React.useState<boolean>(false);
   const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
+  const [copiedId, setCopiedId] = React.useState<string | null>(null);
   const [activeImageId, setActiveImageId] = React.useState<string | null>(
     initialBatches[0]?.images[0]?.id ?? null,
   );
+  const copyTimerRef = React.useRef<number>(0);
+
+  const markCopied = React.useCallback((imageId: string) => {
+    window.clearTimeout(copyTimerRef.current);
+    setCopiedId(imageId);
+    showToast(en.copiedToClipboard);
+    copyTimerRef.current = window.setTimeout(() => {
+      setCopiedId((current) => (current === imageId ? null : current));
+    }, 1100);
+  }, []);
 
   const reload = React.useCallback(async (targetBatchId?: string) => {
     const [nextBatches, nextStatus] = await Promise.all([
@@ -207,8 +258,8 @@ function DesktopHistoryScreen({
       ? "all"
       : deviceFilter;
 
-  const items = React.useMemo(
-    () => flattenBatches(batches, effectiveFilter),
+  const { flat: items, groups } = React.useMemo(
+    () => flattenAndGroup(batches, effectiveFilter),
     [batches, effectiveFilter],
   );
 
@@ -220,7 +271,10 @@ function DesktopHistoryScreen({
   React.useEffect(() => {
     function onKey(event: KeyboardEvent): void {
       const target = event.target;
-      if (target instanceof HTMLElement && target.closest("input,textarea,[role=dialog]")) {
+      if (
+        target instanceof HTMLElement &&
+        target.closest("input,textarea,[role=dialog]")
+      ) {
         return;
       }
       const targetId =
@@ -229,7 +283,9 @@ function DesktopHistoryScreen({
         return;
       }
       if (event.key === "c" || event.key === "C") {
-        void api.copyHistoryImage(targetId);
+        void api.copyHistoryImage(targetId).then(() => {
+          markCopied(targetId);
+        });
       }
       if (event.key === "o" || event.key === "O") {
         void api.openHistoryImage(targetId);
@@ -243,17 +299,23 @@ function DesktopHistoryScreen({
             }),
           ).then(() => {
             setSelectedIds([]);
+            showToast(en.imageDeletedToast);
             return reload();
           });
         } else {
           imageCache.delete(targetId);
-          void api.deleteHistoryImage(targetId).then(() => reload());
+          void api.deleteHistoryImage(targetId).then(() => {
+            showToast(en.imageDeletedToast);
+            return reload();
+          });
         }
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectMode, selectedIds, currentActiveId, reload]);
+  }, [selectMode, selectedIds, currentActiveId, reload, markCopied]);
+
+  const showDeviceName = effectiveFilter === "all";
 
   return (
     <DesktopFrame>
@@ -296,8 +358,11 @@ function DesktopHistoryScreen({
             className="flex-1"
             disabled={selectedIds.length === 0}
             onClick={() => {
-              if (selectedIds[0]) {
-                void api.copyHistoryImage(selectedIds[0]);
+              const target = selectedIds[0];
+              if (target) {
+                void api.copyHistoryImage(target).then(() => {
+                  markCopied(target);
+                });
               }
             }}
           >
@@ -334,6 +399,7 @@ function DesktopHistoryScreen({
                 }),
               ).then(() => {
                 setSelectedIds([]);
+                showToast(en.imageDeletedToast);
                 return reload();
               });
             }}
@@ -366,6 +432,7 @@ function DesktopHistoryScreen({
                   onClick={() => {
                     imageCache.clear();
                     setSelectedIds([]);
+                    showToast(en.imageDeletedToast);
                     void api.deleteHistory().then(() => reload());
                   }}
                 >
@@ -378,40 +445,55 @@ function DesktopHistoryScreen({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
-        {items.length === 0 ? (
+        {groups.length === 0 ? (
           <p className="my-12 text-center text-[0.95rem] text-[#69737a]">
             {en.emptyHistory}
           </p>
         ) : (
-          <div className="grid grid-cols-2 gap-3.5">
-            {items.map((item) => {
-              const isSelected = selectMode
-                ? selectedIds.includes(item.imageId)
-                : item.imageId === currentActiveId;
-              return (
-                <HistoryTile
-                  key={item.imageId}
-                  item={item}
-                  selected={isSelected}
-                  selectMode={selectMode}
-                  onSelect={() => {
-                    setActiveImageId(item.imageId);
-                    if (selectMode) {
-                      setSelectedIds((prev) =>
-                        prev.includes(item.imageId)
-                          ? prev.filter((id) => id !== item.imageId)
-                          : [...prev, item.imageId],
-                      );
-                    } else {
-                      void api.copyHistoryImage(item.imageId);
-                    }
-                  }}
-                  onOpen={() => {
-                    void api.openHistoryImage(item.imageId);
-                  }}
-                />
-              );
-            })}
+          <div className="flex flex-col gap-4">
+            {groups.map((group) => (
+              <div key={group.label} className="flex flex-col gap-2">
+                <div className="flex items-center justify-center">
+                  <span className="rounded-full bg-[#eef2eb] px-3 py-0.5 text-xs font-medium text-[#5c666e]">
+                    {group.label}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3.5">
+                  {group.items.map((item) => {
+                    const isSelected = selectMode
+                      ? selectedIds.includes(item.imageId)
+                      : item.imageId === currentActiveId;
+                    return (
+                      <HistoryTile
+                        key={item.imageId}
+                        item={item}
+                        selected={isSelected}
+                        selectMode={selectMode}
+                        justCopied={copiedId === item.imageId}
+                        showDeviceName={showDeviceName}
+                        onSelect={() => {
+                          setActiveImageId(item.imageId);
+                          if (selectMode) {
+                            setSelectedIds((prev) =>
+                              prev.includes(item.imageId)
+                                ? prev.filter((id) => id !== item.imageId)
+                                : [...prev, item.imageId],
+                            );
+                          } else {
+                            void api.copyHistoryImage(item.imageId).then(() => {
+                              markCopied(item.imageId);
+                            });
+                          }
+                        }}
+                        onOpen={() => {
+                          void api.openHistoryImage(item.imageId);
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -426,7 +508,10 @@ function DesktopHistoryScreen({
                 variant="default"
                 size="sm"
                 onClick={() => {
-                  void api.acceptPhone(pending.id).then(() => reload());
+                  void api.acceptPhone(pending.id).then(() => {
+                    showToast(en.deviceConnectedToast(pending.name));
+                    return reload();
+                  });
                 }}
               >
                 {en.accept}
