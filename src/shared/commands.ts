@@ -146,6 +146,18 @@ export const api = {
     return invoke<Surface>("surface");
   },
 
+  async startWindowDrag(): Promise<void> {
+    if (!inTauri()) {
+      return;
+    }
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().startDragging();
+    } catch {
+      // Ignore if window dragging is unavailable on the current platform
+    }
+  },
+
   async hostStatus(): Promise<HostStatus> {
     if (!inTauri()) {
       await ensurePreview();
