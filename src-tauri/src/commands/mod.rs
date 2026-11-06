@@ -90,6 +90,11 @@ pub(crate) fn surface() -> &'static str {
 }
 
 #[tauri::command]
+pub(crate) fn start_drag(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.start_dragging().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 pub(crate) fn host_status(state: tauri::State<'_, SharedHost>) -> Result<HostStatus, String> {
     let mut host = state.lock().map_err(text_err)?;
     let settings = host.store.load_settings().map_err(text_err)?;
@@ -684,6 +689,7 @@ fn app_group_dir() -> Option<std::path::PathBuf> {
 pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         surface,
+        start_drag,
         host_status,
         list_phones,
         accept_phone,
