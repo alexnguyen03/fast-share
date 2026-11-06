@@ -75,10 +75,33 @@ pub fn firewall_warning() -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(target_os = "windows")]
+static FIREWALL_WARNING_CACHE: std::sync::Mutex<Option<Option<String>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(target_os = "windows")]
 fn windows_firewall_warning() -> Option<String> {
+    if let Ok(guard) = FIREWALL_WARNING_CACHE.lock() {
+        if let Some(cached) = &*guard {
+            return cached.clone();
+        }
+    }
+    let result = query_windows_firewall_warning();
+    if let Ok(mut guard) = FIREWALL_WARNING_CACHE.lock() {
+        *guard = Some(result.clone());
+    }
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn query_windows_firewall_warning() -> Option<String> {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     let profile = Command::new("netsh")
+        .creation_flags(CREATE_NO_WINDOW)
         .args(["advfirewall", "monitor", "show", "currentprofile"])
         .output()
         .ok()
@@ -87,6 +110,7 @@ fn windows_firewall_warning() -> Option<String> {
         return None;
     }
     let rule = Command::new("netsh")
+        .creation_flags(CREATE_NO_WINDOW)
         .args([
             "advfirewall",
             "firewall",
@@ -110,10 +134,13 @@ fn windows_firewall_warning() -> Option<String> {
 pub fn allow_in_firewall(port: u16) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+
         let args = format!(
             "advfirewall firewall add rule name=\"Fast Share LAN\" dir=in action=allow protocol=TCP localport={port}-47670 profile=any"
         );
         let status = std::process::Command::new("powershell")
+            .creation_flags(CREATE_NO_WINDOW)
             .args([
                 "-NoProfile",
                 "-Command",
@@ -121,6 +148,9 @@ pub fn allow_in_firewall(port: u16) -> Result<(), String> {
             ])
             .status()
             .map_err(|error| error.to_string())?;
+        if let Ok(mut guard) = FIREWALL_WARNING_CACHE.lock() {
+            *guard = None;
+        }
         if status.success() {
             Ok(())
         } else {

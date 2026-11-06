@@ -1,5 +1,7 @@
 import { api, type Destination } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
+import { Button } from "../../shared/ui/button";
+import { getOrCreateRoot } from "../../shared/ui/render";
 import { mountDevices } from "../devices/devices";
 import { mountEditor, type Draft } from "../editor/editor";
 import { errorText, note } from "../log";
@@ -48,7 +50,10 @@ async function consumeInbox(root: HTMLElement, fromEvent: boolean): Promise<void
   await openDrafts(root, shared);
 }
 
-export async function openDrafts(root: HTMLElement, imagesBase64: string[]): Promise<void> {
+export async function openDrafts(
+  root: HTMLElement,
+  imagesBase64: string[],
+): Promise<void> {
   const drafts: Draft[] = imagesBase64.map((pngBase64, index) => ({
     id: `draft-${index}`,
     pngBase64,
@@ -57,7 +62,10 @@ export async function openDrafts(root: HTMLElement, imagesBase64: string[]): Pro
   await chooseDestination(root, drafts);
 }
 
-async function chooseDestination(root: HTMLElement, drafts: Draft[]): Promise<void> {
+async function chooseDestination(
+  root: HTMLElement,
+  drafts: Draft[],
+): Promise<void> {
   const known = await api.listKnownPcs();
   if (known.length === 1) {
     openEditor(root, drafts, { ...known[0], online: true }, known);
@@ -87,47 +95,69 @@ async function chooseDestination(root: HTMLElement, drafts: Draft[]): Promise<vo
   showSheet(root, drafts, online, destinations);
 }
 
-function showSheet(root: HTMLElement, drafts: Draft[], online: Destination[], all: Destination[]): void {
-  const shell = document.createElement("section");
-  shell.className = "panel phone";
-  shell.innerHTML = `<header class="bar"><h1>${en.sendTo}</h1></header><div class="list" data-list></div>`;
-  root.replaceChildren(shell);
-  const list = shell.querySelector<HTMLElement>("[data-list]");
-  if (!list) {
-    return;
-  }
-  online.forEach((pc, index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = index === 0 ? "line selected" : "line";
-    button.textContent = pc.name;
-    button.addEventListener("click", () => openEditor(root, drafts, pc, all));
-    list.append(button);
-  });
+function showSheet(
+  root: HTMLElement,
+  drafts: Draft[],
+  online: Destination[],
+  all: Destination[],
+): void {
+  const reactRoot = getOrCreateRoot(root);
+  reactRoot.render(
+    <section className="panel phone">
+      <header className="bar">
+        <h1>{en.sendTo}</h1>
+      </header>
+      <div className="list">
+        {online.map((pc, index) => (
+          <Button
+            key={pc.pcId}
+            variant="darkSecondary"
+            className={index === 0 ? "line selected" : "line"}
+            onClick={() => openEditor(root, drafts, pc, all)}
+          >
+            {pc.name}
+          </Button>
+        ))}
+      </div>
+    </section>,
+  );
 }
 
 function showOffline(root: HTMLElement, drafts: Draft[]): void {
-  const shell = document.createElement("section");
-  shell.className = "panel phone";
-  shell.innerHTML = `
-    <p class="status show">${en.offline}</p>
-    <div class="row">
-      <button type="button" data-action="retry">${en.retry}</button>
-      <button type="button" class="primary" data-action="scan">${en.scanQr}</button>
-    </div>
-  `;
-  root.replaceChildren(shell);
-  shell.querySelector("[data-action=retry]")?.addEventListener("click", () => {
-    void chooseDestination(root, drafts);
-  });
-  shell.querySelector("[data-action=scan]")?.addEventListener("click", () => {
-    void mountDevices(root, () => {
-      void chooseDestination(root, drafts);
-    });
-  });
+  const reactRoot = getOrCreateRoot(root);
+  reactRoot.render(
+    <section className="panel phone">
+      <p className="status show">{en.offline}</p>
+      <div className="row">
+        <Button
+          variant="darkSecondary"
+          onClick={() => {
+            void chooseDestination(root, drafts);
+          }}
+        >
+          {en.retry}
+        </Button>
+        <Button
+          variant="primaryBlue"
+          onClick={() => {
+            void mountDevices(root, () => {
+              void chooseDestination(root, drafts);
+            });
+          }}
+        >
+          {en.scanQr}
+        </Button>
+      </div>
+    </section>,
+  );
 }
 
-function openEditor(root: HTMLElement, drafts: Draft[], pc: Destination, all: Destination[]): void {
+function openEditor(
+  root: HTMLElement,
+  drafts: Draft[],
+  pc: Destination,
+  all: Destination[],
+): void {
   mountEditor(root, {
     pcName: pc.name,
     online: pc.online,
@@ -143,25 +173,37 @@ function openEditor(root: HTMLElement, drafts: Draft[], pc: Destination, all: De
         },
       );
     },
-    onSwitch: () => showSheet(root, drafts, all.filter((item) => item.online), all),
+    onSwitch: () =>
+      showSheet(
+        root,
+        drafts,
+        all.filter((item) => item.online),
+        all,
+      ),
     onSend: async (batchId, images) => {
       try {
-      await api.sendBatch(pc.pcId, batchId, images);
-      note(en.sentTo(pc.name));
-      const shell = document.createElement("section");
-      shell.className = "panel phone";
-      const message = document.createElement("p");
-      message.className = "status show";
-      message.textContent = images.length === 1 ? `${en.sentTo(pc.name)} ${en.pasteReady}` : en.sentTo(pc.name);
-      const backBtn = document.createElement("button");
-      backBtn.type = "button";
-      backBtn.className = "primary scan";
-      backBtn.textContent = en.back;
-      backBtn.addEventListener("click", () => {
-        void mountPhone(root);
-      });
-      shell.append(message, backBtn);
-      root.replaceChildren(shell);
+        await api.sendBatch(pc.pcId, batchId, images);
+        note(en.sentTo(pc.name));
+        const reactRoot = getOrCreateRoot(root);
+        reactRoot.render(
+          <section className="panel phone">
+            <p className="status show">
+              {images.length === 1
+                ? `${en.sentTo(pc.name)} ${en.pasteReady}`
+                : en.sentTo(pc.name)}
+            </p>
+            <Button
+              variant="primaryBlue"
+              size="lg"
+              className="w-full"
+              onClick={() => {
+                void mountPhone(root);
+              }}
+            >
+              {en.back}
+            </Button>
+          </section>,
+        );
       } catch (error) {
         const message = errorText(error);
         note(message || en.didNotReceive(pc.name));
