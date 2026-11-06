@@ -7,11 +7,12 @@ use tauri_plugin_opener::OpenerExt;
 use crate::adapters::phone_client::{self, remembered_qr};
 use crate::domain::{BatchId, DeviceId, DeviceTrust, HostError, ImageId, PcId, MAX_IMAGE_BYTES};
 use crate::ports::Store;
-use crate::runtime::{qr_png, SharedHost};
+use crate::runtime::{qr_png, DockEdge, SharedHost, WindowPrefs};
 use crate::use_cases::{
     accept_device, copy_image, delete_all, delete_image, forget_device, reject_device,
     update_settings,
 };
+use tauri::Emitter;
 
 const APP_GROUP: &str = "group.com.alexnguyen03.fastshare";
 
@@ -92,6 +93,218 @@ pub(crate) fn surface() -> &'static str {
 #[tauri::command]
 pub(crate) fn start_drag(window: tauri::WebviewWindow) -> Result<(), String> {
     window.start_dragging().map_err(|error| error.to_string())
+}
+
+const EXPANDED_W: f64 = 420.0;
+const EXPANDED_H: f64 = 680.0;
+const COLLAPSED_BOX: f64 = 160.0;
+const SNAP_THRESHOLD_PX: i32 = 40;
+const UNDOCK_THRESHOLD_PX: i32 = 72;
+
+#[tauri::command]
+pub(crate) fn get_window_prefs(state: tauri::State<'_, SharedHost>) -> Result<WindowPrefs, String> {
+    let host = state.lock().map_err(text_err)?;
+    Ok(host.window_prefs.clone())
+}
+
+#[tauri::command]
+pub(crate) fn set_window_prefs(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, SharedHost>,
+    snap_to_edge: Option<bool>,
+    always_on_top: Option<bool>,
+) -> Result<WindowPrefs, String> {
+    let mut prefs = {
+        let mut host = state.lock().map_err(text_err)?;
+        if let Some(snap) = snap_to_edge {
+            host.window_prefs.snap_to_edge = snap;
+            if !snap {
+                host.window_prefs.dock_edge = None;
+                host.window_prefs.dock_expanded = true;
+            }
+        }
+        if let Some(top) = always_on_top {
+            host.window_prefs.always_on_top = top;
+        }
+        host.window_prefs.clone()
+    };
+    let effective_top = prefs.always_on_top || prefs.dock_edge.is_some();
+    let _ = window.set_always_on_top(effective_top);
+    if prefs.dock_edge.is_none() {
+        let _ = window.set_size(tauri::LogicalSize::new(EXPANDED_W, EXPANDED_H));
+        prefs.dock_expanded = true;
+    }
+    let _ = window.emit("dock-state", &prefs);
+    Ok(prefs)
+}
+
+#[tauri::command]
+pub(crate) fn toggle_dock_expanded(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, SharedHost>,
+) -> Result<WindowPrefs, String> {
+    let mut prefs = {
+        let host = state.lock().map_err(text_err)?;
+        host.window_prefs.clone()
+    };
+    let Some(edge) = prefs.dock_edge else {
+        return Ok(prefs);
+    };
+    prefs.dock_expanded = !prefs.dock_expanded;
+    apply_dock_geometry(
+        &window,
+        edge,
+        prefs.dock_expanded,
+        prefs.dock_x,
+        prefs.dock_y,
+    );
+    {
+        let mut host = state.lock().map_err(text_err)?;
+        host.window_prefs = prefs.clone();
+    }
+    let _ = window.emit("dock-state", &prefs);
+    Ok(prefs)
+}
+
+#[tauri::command]
+pub(crate) fn quit_app(app: tauri::AppHandle) {
+    crate::request_quit(&app);
+}
+
+pub(crate) fn handle_window_moved(window: &tauri::WebviewWindow, shared: &SharedHost) {
+    let Ok(pos) = window.outer_position() else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let work = monitor.work_area();
+    let mon_left = work.position.x;
+    let mon_top = work.position.y;
+    let mon_right = work.position.x + work.size.width as i32;
+    let mon_bottom = work.position.y + work.size.height as i32;
+
+    let win_left = pos.x;
+    let win_top = pos.y;
+    let win_right = pos.x + size.width as i32;
+    let win_bottom = pos.y + size.height as i32;
+
+    let mut prefs = {
+        let Ok(host) = shared.lock() else {
+            return;
+        };
+        host.window_prefs.clone()
+    };
+    if !prefs.snap_to_edge {
+        return;
+    }
+
+    let dist_left = (win_left - mon_left).abs();
+    let dist_right = (mon_right - win_right).abs();
+    let dist_top = (win_top - mon_top).abs();
+    let dist_bottom = (mon_bottom - win_bottom).abs();
+
+    if let Some(current_edge) = prefs.dock_edge {
+        let dist = match current_edge {
+            DockEdge::Left => dist_left,
+            DockEdge::Right => dist_right,
+            DockEdge::Top => dist_top,
+            DockEdge::Bottom => dist_bottom,
+        };
+        if dist > (UNDOCK_THRESHOLD_PX as f64 * scale) as i32 {
+            prefs.dock_edge = None;
+            prefs.dock_expanded = true;
+            let _ = window.set_always_on_top(prefs.always_on_top);
+            let _ = window.set_size(tauri::LogicalSize::new(EXPANDED_W, EXPANDED_H));
+            if let Ok(mut host) = shared.lock() {
+                host.window_prefs = prefs.clone();
+            }
+            let _ = window.emit("dock-state", &prefs);
+        } else {
+            match current_edge {
+                DockEdge::Left | DockEdge::Right => prefs.dock_y = pos.y,
+                DockEdge::Top | DockEdge::Bottom => prefs.dock_x = pos.x,
+            }
+            if let Ok(mut host) = shared.lock() {
+                host.window_prefs = prefs;
+            }
+        }
+        return;
+    }
+
+    let snap_px = (SNAP_THRESHOLD_PX as f64 * scale) as i32;
+    let mut candidates = [
+        (DockEdge::Left, dist_left),
+        (DockEdge::Right, dist_right),
+        (DockEdge::Top, dist_top),
+        (DockEdge::Bottom, dist_bottom),
+    ];
+    candidates.sort_by_key(|(_, d)| *d);
+    let target_edge = (candidates[0].1 <= snap_px).then_some(candidates[0].0);
+
+    if let Some(edge) = target_edge {
+        prefs.dock_edge = Some(edge);
+        prefs.dock_expanded = false;
+        prefs.dock_x = pos.x;
+        prefs.dock_y = pos.y;
+        let _ = window.set_always_on_top(true);
+        apply_dock_geometry(window, edge, false, pos.x, pos.y);
+        if let Ok(mut host) = shared.lock() {
+            host.window_prefs = prefs.clone();
+        }
+        let _ = window.emit("dock-state", &prefs);
+    }
+}
+
+fn apply_dock_geometry(
+    window: &tauri::WebviewWindow,
+    edge: DockEdge,
+    expanded: bool,
+    saved_x: i32,
+    saved_y: i32,
+) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let scale = monitor.scale_factor();
+    let work = monitor.work_area();
+    let mon_left = work.position.x;
+    let mon_top = work.position.y;
+    let mon_right = work.position.x + work.size.width as i32;
+    let mon_bottom = work.position.y + work.size.height as i32;
+
+    let (w_log, h_log) = if expanded {
+        (EXPANDED_W, EXPANDED_H)
+    } else {
+        (COLLAPSED_BOX, COLLAPSED_BOX)
+    };
+    let req_w = (w_log * scale).round().max(1.0) as u32;
+    let req_h = (h_log * scale).round().max(1.0) as u32;
+
+    let _ = window.set_min_size(Some(tauri::LogicalSize::new(1.0, 1.0)));
+    let _ = window.set_size(tauri::PhysicalSize::new(req_w, req_h));
+
+    let actual = window
+        .outer_size()
+        .unwrap_or(tauri::PhysicalSize::new(req_w, req_h));
+    let w = actual.width as i32;
+    let h = actual.height as i32;
+
+    let clamp_x = saved_x.clamp(mon_left, (mon_right - w).max(mon_left));
+    let clamp_y = saved_y.clamp(mon_top, (mon_bottom - h).max(mon_top));
+
+    let (x, y) = match edge {
+        DockEdge::Left => (mon_left, clamp_y),
+        DockEdge::Right => (mon_right - w, clamp_y),
+        DockEdge::Top => (clamp_x, mon_top),
+        DockEdge::Bottom => (clamp_x, mon_bottom - h),
+    };
+
+    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
 #[tauri::command]
@@ -280,7 +493,9 @@ pub(crate) fn update_host_settings(
     patch: String,
 ) -> Result<crate::domain::Settings, String> {
     let mut host = state.lock().map_err(text_err)?;
-    update_settings(&mut host.store, &patch, chrono::Utc::now()).map_err(text_err)
+    let updated = update_settings(&mut host.store, &patch, chrono::Utc::now()).map_err(text_err)?;
+    crate::adapters::set_os_auto_start(updated.auto_start_with_os);
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -690,6 +905,10 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
     tauri::generate_handler![
         surface,
         start_drag,
+        get_window_prefs,
+        set_window_prefs,
+        toggle_dock_expanded,
+        quit_app,
         host_status,
         list_phones,
         accept_phone,

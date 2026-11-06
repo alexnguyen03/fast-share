@@ -14,6 +14,17 @@ use tauri::Manager;
 #[cfg(not(any(target_os = "ios", target_os = "android")))]
 static QUIT: AtomicBool = AtomicBool::new(false);
 
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+static MOVE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn request_quit(app: &tauri::AppHandle) {
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    {
+        QUIT.store(true, Ordering::Relaxed);
+    }
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -59,21 +70,55 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 #[cfg(not(any(target_os = "ios", target_os = "android")))]
                 {
                     if QUIT.load(Ordering::Relaxed) {
                         return;
                     }
-                    api.prevent_close();
-                    let _ = window.hide();
+                    let close_to_tray = window
+                        .app_handle()
+                        .try_state::<runtime::SharedHost>()
+                        .and_then(|shared| {
+                            shared.lock().ok().and_then(|h| {
+                                use crate::ports::Store;
+                                h.store.load_settings().ok().map(|s| s.close_to_tray)
+                            })
+                        })
+                        .unwrap_or(true);
+                    if close_to_tray {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    } else {
+                        QUIT.store(true, Ordering::Relaxed);
+                    }
                 }
                 #[cfg(any(target_os = "ios", target_os = "android"))]
                 {
                     let _ = (api, window);
                 }
             }
+            tauri::WindowEvent::Moved(_) => {
+                #[cfg(not(any(target_os = "ios", target_os = "android")))]
+                {
+                    let seq = MOVE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+                    let app = window.app_handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(220));
+                        if MOVE_SEQ.load(Ordering::SeqCst) != seq {
+                            return;
+                        }
+                        if let (Some(win), Some(shared)) = (
+                            app.get_webview_window("main"),
+                            app.try_state::<runtime::SharedHost>(),
+                        ) {
+                            commands::handle_window_moved(&win, &shared);
+                        }
+                    });
+                }
+            }
+            _ => {}
         })
         .invoke_handler(commands::invoke_handler())
         .run(tauri::generate_context!())

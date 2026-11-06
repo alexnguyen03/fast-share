@@ -13,6 +13,10 @@ impl OsNotifier {
     pub fn new(app: tauri::AppHandle) -> Self {
         Self { app }
     }
+
+    pub fn emit_event(&self, event: &str, payload: &str) {
+        let _ = self.app.emit(event, payload);
+    }
 }
 
 fn notification_id(batch_id: &BatchId) -> i32 {

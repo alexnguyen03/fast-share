@@ -25,6 +25,39 @@ fn host_ports() -> std::ops::RangeInclusive<u16> {
 #[derive(Clone)]
 pub struct SharedHost(pub Arc<Mutex<HostInner>>);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DockEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowPrefs {
+    pub snap_to_edge: bool,
+    pub always_on_top: bool,
+    pub dock_edge: Option<DockEdge>,
+    pub dock_expanded: bool,
+    pub dock_x: i32,
+    pub dock_y: i32,
+}
+
+impl Default for WindowPrefs {
+    fn default() -> Self {
+        Self {
+            snap_to_edge: true,
+            always_on_top: false,
+            dock_edge: None,
+            dock_expanded: true,
+            dock_x: 160,
+            dock_y: 120,
+        }
+    }
+}
+
 pub struct HostInner {
     pub store: FsStore,
     pub clipboard: OsClipboard,
@@ -35,6 +68,7 @@ pub struct HostInner {
     pub port: u16,
     pub phone: PhoneIdentity,
     pub known_pcs: Vec<KnownPc>,
+    pub window_prefs: WindowPrefs,
     pub data_dir: std::path::PathBuf,
 }
 
@@ -100,6 +134,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         port,
         phone,
         known_pcs,
+        window_prefs: WindowPrefs::default(),
         data_dir: dir,
     })));
     app.manage(shared.clone());
@@ -214,6 +249,8 @@ async fn pair(
         Utc::now(),
     )
     .map_err(error_status)?;
+    host.notifier
+        .emit_event("device-pair-event", body.name.trim());
     Ok(Json(view_outcome(outcome)))
 }
 
@@ -254,6 +291,8 @@ async fn pair_code(
         Utc::now(),
     )
     .map_err(error_status)?;
+    host.notifier
+        .emit_event("device-pair-event", body.name.trim());
     let settings = host.store.load_settings().map_err(error_status)?;
     let view = view_outcome(outcome);
     Ok(Json(PairCodeView {

@@ -9,6 +9,9 @@ use crate::ports::Store;
 struct SettingsPatch {
     history_retention_days: Option<u32>,
     pc_display_name: Option<String>,
+    auto_start_with_os: Option<bool>,
+    close_to_tray: Option<bool>,
+    auto_copy_to_clipboard: Option<bool>,
 }
 
 pub fn update_settings(
@@ -29,6 +32,15 @@ pub fn update_settings(
     if let Some(name) = patch.pc_display_name {
         validate_name(&name)?;
         settings.pc_display_name = name.trim().to_string();
+    }
+    if let Some(auto_start) = patch.auto_start_with_os {
+        settings.auto_start_with_os = auto_start;
+    }
+    if let Some(close_to_tray) = patch.close_to_tray {
+        settings.close_to_tray = close_to_tray;
+    }
+    if let Some(auto_copy) = patch.auto_copy_to_clipboard {
+        settings.auto_copy_to_clipboard = auto_copy;
     }
     store.save_settings(&settings)?;
     Ok(settings)

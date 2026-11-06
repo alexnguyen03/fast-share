@@ -466,4 +466,36 @@ mod tests {
         .unwrap_err();
         assert_eq!(replay, HostError::PairingExpired);
     }
+
+    #[test]
+    fn disabling_auto_copy_to_clipboard_skips_clipboard_write() {
+        let mut store = MemoryStore::new();
+        let (device_id, secret) = trust_phone(&mut store);
+        update_settings(
+            &mut store,
+            r#"{"autoCopyToClipboard":false,"closeToTray":false,"autoStartWithOs":true}"#,
+            now(),
+        )
+        .unwrap();
+        let loaded = store.load_settings().unwrap();
+        assert!(!loaded.auto_copy_to_clipboard);
+        assert!(!loaded.close_to_tray);
+        assert!(loaded.auto_start_with_os);
+
+        let clipboard = RecordingClipboard::new();
+        let notifier = RecordingNotifier::new();
+        ingest_batch(
+            &mut store,
+            &clipboard,
+            &notifier,
+            &device_id,
+            &secret,
+            crate::domain::BatchId::generate(),
+            &[tiny_png()],
+            now(),
+        )
+        .unwrap();
+        assert_eq!(clipboard.count(), 0);
+        assert_eq!(store.list_batches().unwrap().len(), 1);
+    }
 }

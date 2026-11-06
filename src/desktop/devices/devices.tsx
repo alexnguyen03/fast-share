@@ -22,6 +22,7 @@ import {
 import { Button } from "../../shared/ui/button";
 import { Card } from "../../shared/ui/card";
 import { getOrCreateRoot } from "../../shared/ui/render";
+import { showToast } from "../../shared/ui/toast";
 import { DesktopFrame } from "../frame";
 import { relativeTime } from "../history/history";
 
@@ -149,7 +150,10 @@ function DesktopDevicesScreen({
                       <AlertDialogCancel>{en.cancel}</AlertDialogCancel>
                       <AlertDialogAction
                         onClick={() => {
-                          void api.forgetPhone(phone.id).then(refresh);
+                          void api.forgetPhone(phone.id).then(() => {
+                            showToast(en.forgotComputer(phone.name));
+                            return refresh();
+                          });
                         }}
                       >
                         {en.forget}
@@ -186,7 +190,10 @@ function DesktopDevicesScreen({
                       variant="default"
                       size="xs"
                       onClick={() => {
-                        void api.acceptPhone(pending.id).then(refresh);
+                        void api.acceptPhone(pending.id).then(() => {
+                          showToast(en.deviceConnectedToast(pending.name));
+                          return refresh();
+                        });
                       }}
                     >
                       {en.accept}

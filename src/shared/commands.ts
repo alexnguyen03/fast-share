@@ -52,8 +52,18 @@ export type PairResult = {
   status: "pending" | "trusted" | "rejected" | "needs_forget";
 };
 
+export type WindowPrefs = {
+  snapToEdge: boolean;
+  alwaysOnTop: boolean;
+  dockEdge: "left" | "right" | "top" | "bottom" | null;
+  dockExpanded: boolean;
+  dockX: number;
+  dockY: number;
+};
+
 type Preview = {
   settings: Settings;
+  windowPrefs: WindowPrefs;
   phones: PhoneView[];
   history: HistoryBatch[];
   images: Record<string, string>;
@@ -62,7 +72,21 @@ type Preview = {
 };
 
 const preview: Preview = {
-  settings: { historyRetentionDays: 7, pcDisplayName: "Office PC" },
+  settings: {
+    historyRetentionDays: 7,
+    pcDisplayName: "Office PC",
+    autoStartWithOs: false,
+    closeToTray: true,
+    autoCopyToClipboard: true,
+  },
+  windowPrefs: {
+    snapToEdge: true,
+    alwaysOnTop: false,
+    dockEdge: null,
+    dockExpanded: true,
+    dockX: 160,
+    dockY: 120,
+  },
   phones: [
     { id: "phone-work-1", name: "Work iPhone", trust: "trusted" },
     { id: "phone-new-1", name: "Kitchen iPhone", trust: "pending" },
@@ -153,6 +177,49 @@ export const api = {
     }
     void tauriInvoke("start_drag").catch(() => {
       void getCurrentWindow().startDragging();
+    });
+  },
+
+  getWindowPrefs(): Promise<WindowPrefs> {
+    if (!inTauri()) {
+      return Promise.resolve({ ...preview.windowPrefs });
+    }
+    return invoke<WindowPrefs>("get_window_prefs");
+  },
+
+  setWindowPrefs(patch: {
+    snapToEdge?: boolean;
+    alwaysOnTop?: boolean;
+  }): Promise<WindowPrefs> {
+    if (!inTauri()) {
+      preview.windowPrefs = { ...preview.windowPrefs, ...patch };
+      return Promise.resolve({ ...preview.windowPrefs });
+    }
+    return invoke<WindowPrefs>("set_window_prefs", patch);
+  },
+
+  toggleDockExpanded(): Promise<WindowPrefs> {
+    if (!inTauri()) {
+      preview.windowPrefs.dockExpanded = !preview.windowPrefs.dockExpanded;
+      return Promise.resolve({ ...preview.windowPrefs });
+    }
+    return invoke<WindowPrefs>("toggle_dock_expanded");
+  },
+
+  quitApp(): Promise<void> {
+    if (!inTauri()) {
+      return Promise.resolve();
+    }
+    return invoke("quit_app");
+  },
+
+  async onDockState(cb: (prefs: WindowPrefs) => void): Promise<() => void> {
+    if (!inTauri()) {
+      return () => undefined;
+    }
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<WindowPrefs>("dock-state", (event) => {
+      cb(event.payload);
     });
   },
 
@@ -372,9 +439,25 @@ export const api = {
     const unlistenUpdated = await listen<string>("history-updated", () => {
       refresh();
     });
+    const unlistenPair = await listen<string>("device-pair-event", () => {
+      refresh();
+    });
     return () => {
       unlistenFocus();
       unlistenUpdated();
+      unlistenPair();
     };
+  },
+
+  async onDevicePairEvent(cb: (name: string) => void): Promise<() => void> {
+    if (!inTauri()) {
+      return () => undefined;
+    }
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<string>("device-pair-event", (event) => {
+      if (typeof event.payload === "string" && event.payload.length > 0) {
+        cb(event.payload);
+      }
+    });
   },
 };

@@ -69,7 +69,11 @@ pub fn commit_validated_batch(
     }
 
     let count = records.len();
-    if count == 1 {
+    let auto_copy = store
+        .load_settings()
+        .map(|s| s.auto_copy_to_clipboard)
+        .unwrap_or(true);
+    if count == 1 && auto_copy {
         let file_name = &records[0].file_name;
         let png = store.read_image(file_name)?;
         clipboard.write_png(&png)?;
