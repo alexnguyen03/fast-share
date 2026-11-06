@@ -6,9 +6,11 @@ alwaysApply: true
 
 # TypeScript UI
 
-`src/phone` and `src/desktop` stay separate. Shared types live in `src/shared`.
+`src/phone` and `src/desktop` stay separate. Shared types and `shadcn/ui` primitives live in `src/shared`.
 
 The UI calls Tauri commands. It does not open a socket and it does not write the history directory.
+
+All UI styling uses Tailwind CSS and `shadcn/ui` components from `src/shared/ui/`. Per `docs/adr/0001-shadcn-ui-and-no-native-components.md`, feature code under `src/desktop` and `src/phone` MUST NOT use raw native interactive controls (`<button>`, `<input>`, `<select>`, `<option>`, `<textarea>`) or native browser dialogs (`window.confirm`, `window.alert`, `window.prompt`) unless explicitly approved by the user. Always use `Button`, `Input`, `Label`, `Card`, `Badge`, `Select`, `Checkbox`, and `AlertDialog` from `src/shared/ui/`.
 
 Editor tools are the union `Crop | Arrow | Text | Blur`. Add a tool as a new variant instead of rewriting the canvas.
 
