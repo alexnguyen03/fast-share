@@ -5,21 +5,35 @@ import { mountEditor, type Draft } from "../editor/editor";
 import { errorText, note } from "../log";
 
 let inboxBound = false;
+let takingInbox = false;
 
 export async function mountPhone(root: HTMLElement): Promise<void> {
   if (!inboxBound) {
     inboxBound = true;
     window.addEventListener("fast-share-inbox", () => {
-      void mountPhone(root);
+      void consumeInbox(root, true);
     });
   }
+  await consumeInbox(root, false);
+}
+
+async function consumeInbox(root: HTMLElement, fromEvent: boolean): Promise<void> {
+  if (takingInbox) {
+    return;
+  }
+  takingInbox = true;
   let shared: string[] = [];
   try {
     shared = await api.takeSharedImages();
   } catch (error) {
     note(errorText(error));
+  } finally {
+    takingInbox = false;
   }
   if (shared.length === 0) {
+    if (fromEvent) {
+      return;
+    }
     await mountDevices(
       root,
       () => {
@@ -119,9 +133,15 @@ function openEditor(root: HTMLElement, drafts: Draft[], pc: Destination, all: De
     online: pc.online,
     drafts,
     onClose: () => {
-      void mountDevices(root, () => {
-        void mountPhone(root);
-      });
+      void mountDevices(
+        root,
+        () => {
+          void mountPhone(root);
+        },
+        (pickedBase64) => {
+          void openDrafts(root, pickedBase64);
+        },
+      );
     },
     onSwitch: () => showSheet(root, drafts, all.filter((item) => item.online), all),
     onSend: async (batchId, images) => {
