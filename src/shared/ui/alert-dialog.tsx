@@ -13,7 +13,7 @@ const AlertDialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Overlay
     className={cn(
-      "fixed inset-0 z-50 bg-black/50 backdrop-blur-[1px]",
+      "fixed inset-0 z-50 bg-black/45 backdrop-blur-[1px]",
       className,
     )}
     {...props}
@@ -31,7 +31,7 @@ const AlertDialogContent = React.forwardRef<
     <AlertDialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-2.5rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border border-border bg-popover p-5 text-popover-foreground shadow-xl",
+        "fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-2.5rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 gap-4 rounded-2xl border-0 bg-popover p-5 text-popover-foreground shadow-[0_12px_32px_rgba(0,0,0,0.18)]",
         className,
       )}
       {...props}
@@ -103,7 +103,7 @@ const AlertDialogCancel = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Cancel
     ref={ref}
-    className={cn(buttonVariants({ variant: "outline", size: "sm" }), className)}
+    className={cn(buttonVariants({ variant: "secondary", size: "sm" }), className)}
     {...props}
   />
 ));

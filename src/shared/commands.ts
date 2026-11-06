@@ -1,3 +1,5 @@
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { en } from "./locales/en";
 import type { Settings } from "./settings";
 
@@ -78,9 +80,8 @@ function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-async function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  const { invoke: call } = await import("@tauri-apps/api/core");
-  return call<T>(command, args);
+function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  return tauriInvoke<T>(command, args);
 }
 
 async function samplePng(label: string, hue: string): Promise<string> {
@@ -146,16 +147,13 @@ export const api = {
     return invoke<Surface>("surface");
   },
 
-  async startWindowDrag(): Promise<void> {
+  startWindowDrag(): void {
     if (!inTauri()) {
       return;
     }
-    try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().startDragging();
-    } catch {
-      // Ignore if window dragging is unavailable on the current platform
-    }
+    void tauriInvoke("start_drag").catch(() => {
+      void getCurrentWindow().startDragging();
+    });
   },
 
   async hostStatus(): Promise<HostStatus> {

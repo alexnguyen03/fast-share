@@ -14,7 +14,7 @@ const SelectTrigger = React.forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
-      "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-transparent bg-transparent px-3 py-1.5 text-base font-semibold text-foreground transition-colors hover:bg-secondary hover:border-border focus:outline-none focus:ring-2 focus:ring-ring/35 cursor-pointer",
+      "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border-0 bg-transparent px-3 py-1.5 text-base font-semibold text-foreground transition-colors hover:bg-secondary/75 focus:outline-none focus:bg-secondary/75 cursor-pointer",
       className,
     )}
     {...props}
@@ -35,14 +35,14 @@ const SelectContent = React.forwardRef<
     <SelectPrimitive.Content
       ref={ref}
       className={cn(
-        "relative z-50 max-h-72 min-w-[9rem] overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg",
+        "relative z-50 max-h-72 min-w-[9rem] overflow-hidden rounded-xl border-0 bg-popover text-popover-foreground shadow-[0_8px_24px_rgba(0,0,0,0.14)]",
         position === "popper" && "translate-y-1",
         className,
       )}
       position={position}
       {...props}
     >
-      <SelectPrimitive.Viewport className="p-1">
+      <SelectPrimitive.Viewport className="p-1.5">
         {children}
       </SelectPrimitive.Viewport>
     </SelectPrimitive.Content>
@@ -57,7 +57,7 @@ const SelectItem = React.forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-pointer select-none items-center rounded-md py-1.5 pl-7 pr-3 text-sm font-medium outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex w-full cursor-pointer select-none items-center rounded-lg py-1.5 pl-7 pr-3 text-sm font-medium outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className,
     )}
     {...props}

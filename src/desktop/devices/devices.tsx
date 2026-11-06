@@ -230,7 +230,7 @@ function DesktopDevicesScreen({
         </Button>
 
         {showQr ? (
-          <Card className="flex flex-col items-center gap-1 border-[#d7ded4] bg-[#f2f5f0] p-3">
+          <Card className="flex flex-col items-center gap-1 border-0 bg-[#f0f3ee] p-3">
             <img
               src={`data:image/png;base64,${status.qrPngBase64}`}
               alt={en.pairPhone}
@@ -242,7 +242,7 @@ function DesktopDevicesScreen({
             </p>
             <p className="text-sm text-[#7d868d]">{status.lanAddress}</p>
             {status.firewallWarning ? (
-              <Card className="mt-2 flex flex-col gap-2 border-[#b8e2c6] bg-[#eefaf2] p-2.5">
+              <Card className="mt-2 flex flex-col gap-2 border-0 bg-[#eefaf2] p-2.5">
                 <p className="text-xs">{en.firewallPublicWarning}</p>
                 <Button
                   variant="default"

@@ -119,8 +119,8 @@ function HistoryTile({
       onClick={onSelect}
       onDoubleClick={onOpen}
       className={cn(
-        "relative flex cursor-pointer flex-col gap-1.5 rounded-md border-[1.5px] border-[#c6ccd2] bg-[#f2f4f0] p-2 text-left transition-all hover:border-[#0f8a4b]",
-        selected && "border-[#0f8a4b] ring-2 ring-[#0f8a4b]/25",
+        "relative flex cursor-pointer flex-col gap-1.5 rounded-xl border-0 bg-[#f0f3ee] p-2 text-left transition-colors hover:bg-[#e7ece4]",
+        selected && "bg-[#dff2e7]",
       )}
     >
       <div className="grid aspect-[1.15/1] w-full place-items-center overflow-hidden rounded-[4px] bg-white">
@@ -418,7 +418,7 @@ function DesktopHistoryScreen({
         {status.pending.map((pending) => (
           <Card
             key={pending.id}
-            className="mt-2.5 flex flex-col gap-2 border-[#b8e2c6] bg-[#eefaf2] p-3"
+            className="mt-2.5 flex flex-col gap-2 border-0 bg-[#eefaf2] p-3"
           >
             <p className="text-sm font-medium">{en.acceptPhone(pending.name)}</p>
             <div className="flex gap-2">
