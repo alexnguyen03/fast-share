@@ -12,6 +12,7 @@ struct SettingsPatch {
     auto_start_with_os: Option<bool>,
     close_to_tray: Option<bool>,
     auto_copy_to_clipboard: Option<bool>,
+    theme: Option<String>,
 }
 
 pub fn update_settings(
@@ -41,6 +42,12 @@ pub fn update_settings(
     }
     if let Some(auto_copy) = patch.auto_copy_to_clipboard {
         settings.auto_copy_to_clipboard = auto_copy;
+    }
+    if let Some(theme) = patch.theme {
+        if !crate::domain::ALLOWED_THEMES.contains(&theme.as_str()) {
+            return Err(HostError::UnknownSettingsField);
+        }
+        settings.theme = theme;
     }
     store.save_settings(&settings)?;
     Ok(settings)

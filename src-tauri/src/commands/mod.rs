@@ -167,6 +167,108 @@ pub(crate) fn toggle_dock_expanded(
 }
 
 #[tauri::command]
+pub(crate) fn slide_docked(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, SharedHost>,
+    delta_x: i32,
+    delta_y: i32,
+) -> Result<WindowPrefs, String> {
+    let mut prefs = {
+        let host = state.lock().map_err(text_err)?;
+        host.window_prefs.clone()
+    };
+    let Some(edge) = prefs.dock_edge else {
+        return Ok(prefs);
+    };
+    let scale = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
+    match edge {
+        DockEdge::Left | DockEdge::Right => {
+            prefs.dock_y += (delta_y as f64 * scale).round() as i32;
+        }
+        DockEdge::Top | DockEdge::Bottom => {
+            prefs.dock_x += (delta_x as f64 * scale).round() as i32;
+        }
+    }
+    apply_dock_geometry(
+        &window,
+        edge,
+        prefs.dock_expanded,
+        prefs.dock_x,
+        prefs.dock_y,
+    );
+    {
+        let mut host = state.lock().map_err(text_err)?;
+        host.window_prefs = prefs.clone();
+    }
+    Ok(prefs)
+}
+
+#[tauri::command]
+pub(crate) fn undock_and_drag(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, SharedHost>,
+) -> Result<WindowPrefs, String> {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return Err("no monitor".to_string());
+    };
+    let scale = monitor.scale_factor();
+    let work = monitor.work_area();
+    let mon_left = work.position.x;
+    let mon_top = work.position.y;
+    let mon_right = work.position.x + work.size.width as i32;
+    let mon_bottom = work.position.y + work.size.height as i32;
+
+    let mut prefs = {
+        let host = state.lock().map_err(text_err)?;
+        host.window_prefs.clone()
+    };
+    let prev_edge = prefs.dock_edge;
+    prefs.dock_edge = None;
+    prefs.dock_expanded = true;
+
+    let req_w = (EXPANDED_W * scale).round().max(1.0) as u32;
+    let req_h = (EXPANDED_H * scale).round().max(1.0) as u32;
+    let _ = window.set_always_on_top(prefs.always_on_top);
+    let _ = window.set_size(tauri::PhysicalSize::new(req_w, req_h));
+
+    let w = req_w as i32;
+    let h = req_h as i32;
+    let margin = (52.0 * scale).round() as i32;
+    let (new_x, new_y) = match prev_edge {
+        Some(DockEdge::Left) => (
+            mon_left + margin,
+            prefs.dock_y.clamp(mon_top, (mon_bottom - h).max(mon_top)),
+        ),
+        Some(DockEdge::Right) => (
+            (mon_right - w - margin).max(mon_left),
+            prefs.dock_y.clamp(mon_top, (mon_bottom - h).max(mon_top)),
+        ),
+        Some(DockEdge::Top) => (
+            prefs.dock_x.clamp(mon_left, (mon_right - w).max(mon_left)),
+            mon_top + margin,
+        ),
+        Some(DockEdge::Bottom) => (
+            prefs.dock_x.clamp(mon_left, (mon_right - w).max(mon_left)),
+            (mon_bottom - h - margin).max(mon_top),
+        ),
+        None => (prefs.dock_x, prefs.dock_y),
+    };
+    let _ = window.set_position(tauri::PhysicalPosition::new(new_x, new_y));
+    {
+        let mut host = state.lock().map_err(text_err)?;
+        host.window_prefs = prefs.clone();
+    }
+    let _ = window.emit("dock-state", &prefs);
+    let _ = window.start_dragging();
+    Ok(prefs)
+}
+
+#[tauri::command]
 pub(crate) fn quit_app(app: tauri::AppHandle) {
     crate::request_quit(&app);
 }
@@ -203,19 +305,19 @@ pub(crate) fn handle_window_moved(window: &tauri::WebviewWindow, shared: &Shared
         return;
     }
 
-    let dist_left = (win_left - mon_left).abs();
-    let dist_right = (mon_right - win_right).abs();
-    let dist_top = (win_top - mon_top).abs();
-    let dist_bottom = (mon_bottom - win_bottom).abs();
+    let over_left = win_left - mon_left;
+    let over_right = mon_right - win_right;
+    let over_top = win_top - mon_top;
+    let over_bottom = mon_bottom - win_bottom;
 
     if let Some(current_edge) = prefs.dock_edge {
-        let dist = match current_edge {
-            DockEdge::Left => dist_left,
-            DockEdge::Right => dist_right,
-            DockEdge::Top => dist_top,
-            DockEdge::Bottom => dist_bottom,
+        let raw_dist = match current_edge {
+            DockEdge::Left => (win_left - mon_left).abs(),
+            DockEdge::Right => (mon_right - win_right).abs(),
+            DockEdge::Top => (win_top - mon_top).abs(),
+            DockEdge::Bottom => (mon_bottom - win_bottom).abs(),
         };
-        if dist > (UNDOCK_THRESHOLD_PX as f64 * scale) as i32 {
+        if raw_dist > (UNDOCK_THRESHOLD_PX as f64 * scale) as i32 {
             prefs.dock_edge = None;
             prefs.dock_expanded = true;
             let _ = window.set_always_on_top(prefs.always_on_top);
@@ -229,19 +331,26 @@ pub(crate) fn handle_window_moved(window: &tauri::WebviewWindow, shared: &Shared
                 DockEdge::Left | DockEdge::Right => prefs.dock_y = pos.y,
                 DockEdge::Top | DockEdge::Bottom => prefs.dock_x = pos.x,
             }
+            apply_dock_geometry(
+                window,
+                current_edge,
+                prefs.dock_expanded,
+                prefs.dock_x,
+                prefs.dock_y,
+            );
             if let Ok(mut host) = shared.lock() {
                 host.window_prefs = prefs;
             }
+            return;
         }
-        return;
     }
 
     let snap_px = (SNAP_THRESHOLD_PX as f64 * scale) as i32;
     let mut candidates = [
-        (DockEdge::Left, dist_left),
-        (DockEdge::Right, dist_right),
-        (DockEdge::Top, dist_top),
-        (DockEdge::Bottom, dist_bottom),
+        (DockEdge::Left, over_left),
+        (DockEdge::Right, over_right),
+        (DockEdge::Top, over_top),
+        (DockEdge::Bottom, over_bottom),
     ];
     candidates.sort_by_key(|(_, d)| *d);
     let target_edge = (candidates[0].1 <= snap_px).then_some(candidates[0].0);
@@ -448,6 +557,44 @@ pub(crate) fn open_history_image(
     state: tauri::State<'_, SharedHost>,
     image_id: String,
 ) -> Result<(), String> {
+    let path = history_image_path(&state, &image_id)?;
+    app.opener()
+        .open_path(path.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn reveal_history_image(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedHost>,
+    image_id: String,
+) -> Result<(), String> {
+    let path = history_image_path(&state, &image_id)?;
+    app.opener()
+        .reveal_item_in_dir(path)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn copy_history_image_path(
+    state: tauri::State<'_, SharedHost>,
+    image_id: String,
+) -> Result<String, String> {
+    let path = history_image_path(&state, &image_id)?;
+    let path_str = path.to_string_lossy().to_string();
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    {
+        if let Ok(mut clipboard) = arboard::Clipboard::new() {
+            let _ = clipboard.set_text(path_str.clone());
+        }
+    }
+    Ok(path_str)
+}
+
+fn history_image_path(
+    state: &tauri::State<'_, SharedHost>,
+    image_id: &str,
+) -> Result<std::path::PathBuf, String> {
     let host = state.lock().map_err(text_err)?;
     let id = ImageId::parse(image_id).map_err(text_err)?;
     let batches = host.store.list_batches().map_err(text_err)?;
@@ -457,10 +604,7 @@ pub(crate) fn open_history_image(
         .find(|image| image.id == id)
         .map(|image| image.file_name.clone())
         .ok_or_else(|| HostError::NotFound.to_string())?;
-    let path = host.store.image_file(&file_name).map_err(text_err)?;
-    app.opener()
-        .open_path(path.to_string_lossy().to_string(), None::<&str>)
-        .map_err(|error| error.to_string())
+    host.store.image_file(&file_name).map_err(text_err)
 }
 
 #[tauri::command]
@@ -908,6 +1052,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         get_window_prefs,
         set_window_prefs,
         toggle_dock_expanded,
+        slide_docked,
+        undock_and_drag,
         quit_app,
         host_status,
         list_phones,
@@ -918,6 +1064,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         get_history_image,
         copy_history_image,
         open_history_image,
+        reveal_history_image,
+        copy_history_image_path,
         delete_history_image,
         delete_history,
         get_settings,

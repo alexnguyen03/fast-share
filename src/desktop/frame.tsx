@@ -13,7 +13,8 @@ import {
 } from "../shared/ui/context-menu";
 import { showToast, Toaster } from "../shared/ui/toast";
 
-const DRAG_THRESHOLD_PX = 4;
+const CLICK_THRESHOLD_PX = 4;
+const UNDOCK_PULL_PX = 36;
 
 export function DesktopFrame({
   children,
@@ -33,14 +34,20 @@ export function DesktopFrame({
 
   const dragStateRef = React.useRef<{
     active: boolean;
-    startedDrag: boolean;
-    startX: number;
-    startY: number;
+    moved: boolean;
+    pointerId: number;
+    startScreenX: number;
+    startScreenY: number;
+    lastScreenX: number;
+    lastScreenY: number;
   }>({
     active: false,
-    startedDrag: false,
-    startX: 0,
-    startY: 0,
+    moved: false,
+    pointerId: -1,
+    startScreenX: 0,
+    startScreenY: 0,
+    lastScreenX: 0,
+    lastScreenY: 0,
   });
 
   React.useEffect(() => {
@@ -65,15 +72,17 @@ export function DesktopFrame({
 
   const edge = prefs.dockEdge;
   const isCollapsed = edge !== null && !prefs.dockExpanded;
-  const isHorizontal = edge === "top" || edge === "bottom";
+  const isHorizontal = isCollapsed && (edge === "top" || edge === "bottom");
 
-  const containerClass = cn(
-    "flex h-full w-full",
-    edge === "right" && "flex-row-reverse items-start justify-start",
-    edge === "top" && "flex-col items-center justify-start",
-    edge === "bottom" && "flex-col-reverse items-center justify-start",
-    (edge === "left" || edge === null) && "flex-row items-start justify-start",
-  );
+  const containerClass = isCollapsed
+    ? cn(
+        "flex h-full w-full",
+        edge === "right" && "flex-row-reverse items-start justify-start",
+        edge === "top" && "flex-col items-center justify-start",
+        edge === "bottom" && "flex-col-reverse items-center justify-start",
+        edge === "left" && "flex-row items-start justify-start",
+      )
+    : "flex h-full w-full flex-row items-start justify-start";
 
   const tabShapeClass = isHorizontal
     ? cn(
@@ -82,11 +91,9 @@ export function DesktopFrame({
       )
     : cn(
         "min-h-[138px] w-[34px] px-1 py-3.5",
-        !isCollapsed && "mt-6",
-        edge === "left" && isCollapsed && "rounded-r-[10px]",
-        edge === "right" && isCollapsed && "rounded-l-[10px]",
-        edge === "right" && !isCollapsed && "rounded-r-[10px]",
-        (edge === "left" || edge === null) && !isCollapsed && "rounded-l-[10px]",
+        !isCollapsed && "mt-6 rounded-l-[10px]",
+        isCollapsed && edge === "left" && "rounded-r-[10px]",
+        isCollapsed && edge === "right" && "rounded-l-[10px]",
       );
 
   return (
@@ -103,22 +110,69 @@ export function DesktopFrame({
               }
               dragStateRef.current = {
                 active: true,
-                startedDrag: false,
-                startX: event.clientX,
-                startY: event.clientY,
+                moved: false,
+                pointerId: event.pointerId,
+                startScreenX: event.screenX,
+                startScreenY: event.screenY,
+                lastScreenX: event.screenX,
+                lastScreenY: event.screenY,
               };
+              if (prefs.dockEdge !== null) {
+                try {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                } catch {
+                  // Ignore if pointer capture is unavailable
+                }
+              }
             }}
             onPointerMove={(event) => {
               const state = dragStateRef.current;
-              if (!state.active || state.startedDrag) {
+              if (!state.active) {
                 return;
               }
-              const dx = event.clientX - state.startX;
-              const dy = event.clientY - state.startY;
-              if (Math.hypot(dx, dy) > DRAG_THRESHOLD_PX) {
-                state.startedDrag = true;
+              const totalDx = event.screenX - state.startScreenX;
+              const totalDy = event.screenY - state.startScreenY;
+              const totalDist = Math.hypot(totalDx, totalDy);
+
+              if (prefs.dockEdge === null) {
+                if (totalDist > CLICK_THRESHOLD_PX) {
+                  state.active = false;
+                  state.moved = true;
+                  api.startWindowDrag();
+                }
+                return;
+              }
+
+              const pullAway =
+                prefs.dockEdge === "left"
+                  ? totalDx
+                  : prefs.dockEdge === "right"
+                    ? -totalDx
+                    : prefs.dockEdge === "top"
+                      ? totalDy
+                      : -totalDy;
+
+              if (pullAway > UNDOCK_PULL_PX) {
                 state.active = false;
-                api.startWindowDrag();
+                state.moved = true;
+                try {
+                  event.currentTarget.releasePointerCapture(state.pointerId);
+                } catch {
+                  // Ignore
+                }
+                void api.undockAndDrag().then(setPrefs);
+                return;
+              }
+
+              if (totalDist > CLICK_THRESHOLD_PX) {
+                state.moved = true;
+                const stepDx = Math.round(event.screenX - state.lastScreenX);
+                const stepDy = Math.round(event.screenY - state.lastScreenY);
+                if (stepDx !== 0 || stepDy !== 0) {
+                  state.lastScreenX = event.screenX;
+                  state.lastScreenY = event.screenY;
+                  void api.slideDocked(stepDx, stepDy);
+                }
               }
             }}
             onPointerUp={(event) => {
@@ -127,7 +181,12 @@ export function DesktopFrame({
                 return;
               }
               state.active = false;
-              if (event.button === 0 && !state.startedDrag && prefs.dockEdge !== null) {
+              try {
+                event.currentTarget.releasePointerCapture(state.pointerId);
+              } catch {
+                // Ignore
+              }
+              if (event.button === 0 && !state.moved && prefs.dockEdge !== null) {
                 void api.toggleDockExpanded().then(setPrefs);
               }
             }}

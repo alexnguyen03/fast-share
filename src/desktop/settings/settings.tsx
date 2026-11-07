@@ -1,8 +1,14 @@
 import * as React from "react";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Moon, Sun } from "lucide-react";
 import { api } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
-import type { Settings } from "../../shared/settings";
+import { cn } from "../../shared/lib/utils";
+import {
+  applyTheme,
+  THEME_PRESETS,
+  type AppTheme,
+  type Settings,
+} from "../../shared/settings";
 import { Button } from "../../shared/ui/button";
 import { Card } from "../../shared/ui/card";
 import { Checkbox } from "../../shared/ui/checkbox";
@@ -32,27 +38,62 @@ function DesktopSettingsScreen({
   const [autoCopyToClipboard, setAutoCopyToClipboard] = React.useState<boolean>(
     initialSettings.autoCopyToClipboard ?? true,
   );
+  const [theme, setTheme] = React.useState<AppTheme>(
+    initialSettings.theme ?? "emerald-light",
+  );
   const [statusText, setStatusText] = React.useState("");
+  const debounceRef = React.useRef<number>(0);
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
-    event.preventDefault();
-    const retention = Number(retentionDays);
+  const savePatch = React.useCallback((patch: Partial<Settings>, notify = false) => {
+    setStatusText("");
     void api
-      .updateSettings({
-        pcDisplayName: pcName.trim(),
-        historyRetentionDays: retention,
-        autoStartWithOs,
-        closeToTray,
-        autoCopyToClipboard,
-      })
+      .updateSettings(patch)
       .then(() => {
-        showToast(en.settingsSaved);
-        onBack();
+        if (notify) {
+          showToast(en.settingsSaved);
+        }
       })
       .catch((error: unknown) => {
         setStatusText(error instanceof Error ? error.message : en.settings);
       });
+  }, []);
+
+  const scheduleTextSave = React.useCallback(
+    (nextName: string, nextDays: string) => {
+      window.clearTimeout(debounceRef.current);
+      debounceRef.current = window.setTimeout(() => {
+        const trimmed = nextName.trim();
+        const retention = Number(nextDays);
+        if (!trimmed || Number.isNaN(retention) || retention < 1 || retention > 90) {
+          return;
+        }
+        savePatch(
+          {
+            pcDisplayName: trimmed,
+            historyRetentionDays: retention,
+          },
+          true,
+        );
+      }, 450);
+    },
+    [savePatch],
+  );
+
+  React.useEffect(() => {
+    return () => window.clearTimeout(debounceRef.current);
+  }, []);
+
+  function selectTheme(nextTheme: AppTheme): void {
+    setTheme(nextTheme);
+    applyTheme(nextTheme);
+    savePatch({ theme: nextTheme });
   }
+
+  const currentPreset =
+    THEME_PRESETS.find((item) => item.id === theme) ?? THEME_PRESETS[0];
+  const isDark = currentPreset.mode === "dark";
+  const lightPresets = THEME_PRESETS.filter((item) => item.mode === "light");
+  const darkPresets = THEME_PRESETS.filter((item) => item.mode === "dark");
 
   return (
     <DesktopFrame>
@@ -68,13 +109,21 @@ function DesktopSettingsScreen({
         <h1 className="m-0 text-center text-[1.12rem] font-semibold text-foreground">
           {en.settings}
         </h1>
-        <span className="w-9" />
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={en.appearance}
+          title={isDark ? en.lightThemes : en.darkThemes}
+          onClick={() => {
+            const target = isDark ? lightPresets[0].id : darkPresets[0].id;
+            selectTheme(target);
+          }}
+        >
+          {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </Button>
       </header>
 
-      <form
-        onSubmit={handleSubmit}
-        className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto pt-2"
-      >
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pt-1 pr-0.5">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="pcDisplayName">{en.pcName}</Label>
           <Input
@@ -83,7 +132,11 @@ function DesktopSettingsScreen({
             maxLength={64}
             required
             value={pcName}
-            onChange={(event) => setPcName(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              setPcName(next);
+              scheduleTextSave(next, retentionDays);
+            }}
           />
         </div>
 
@@ -97,15 +150,103 @@ function DesktopSettingsScreen({
             max={90}
             required
             value={retentionDays}
-            onChange={(event) => setRetentionDays(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              setRetentionDays(next);
+              scheduleTextSave(pcName, next);
+            }}
           />
         </div>
 
-        <Card className="flex flex-col gap-3 bg-muted p-3.5">
+        <Card className="flex flex-col gap-2.5 bg-muted p-3">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {en.appearance}
+          </span>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">
+              {en.lightThemes}
+            </span>
+            <div className="grid grid-cols-3 gap-1.5">
+              {lightPresets.map((preset) => (
+                <Button
+                  key={preset.id}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => selectTheme(preset.id)}
+                  className={cn(
+                    "flex h-auto flex-col items-center gap-1 rounded-lg px-2 py-2 text-xs",
+                    theme === preset.id
+                      ? "bg-accent text-accent-foreground font-semibold"
+                      : "bg-secondary/60 text-foreground",
+                  )}
+                >
+                  <span className="flex items-center gap-1">
+                    <span
+                      className="h-3.5 w-3.5 rounded-full"
+                      style={{ background: preset.bg }}
+                    />
+                    <span
+                      className="h-3.5 w-3.5 rounded-full"
+                      style={{ background: preset.primary }}
+                    />
+                  </span>
+                  <span className="truncate">
+                    {en.themeNames[preset.id]}
+                  </span>
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">
+              {en.darkThemes}
+            </span>
+            <div className="grid grid-cols-3 gap-1.5">
+              {darkPresets.map((preset) => (
+                <Button
+                  key={preset.id}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => selectTheme(preset.id)}
+                  className={cn(
+                    "flex h-auto flex-col items-center gap-1 rounded-lg px-2 py-2 text-xs",
+                    theme === preset.id
+                      ? "bg-accent text-accent-foreground font-semibold"
+                      : "bg-secondary/60 text-foreground",
+                  )}
+                >
+                  <span className="flex items-center gap-1">
+                    <span
+                      className="h-3.5 w-3.5 rounded-full"
+                      style={{ background: preset.bg }}
+                    />
+                    <span
+                      className="h-3.5 w-3.5 rounded-full"
+                      style={{ background: preset.primary }}
+                    />
+                  </span>
+                  <span className="truncate">
+                    {en.themeNames[preset.id]}
+                  </span>
+                </Button>
+              ))}
+            </div>
+          </div>
+        </Card>
+
+        <Card className="flex flex-col gap-3 bg-muted p-3">
           <div
             role="button"
             tabIndex={0}
-            onClick={() => setAutoCopyToClipboard((prev) => !prev)}
+            onClick={() => {
+              const next = !autoCopyToClipboard;
+              setAutoCopyToClipboard(next);
+              savePatch({ autoCopyToClipboard: next }, true);
+            }}
             className="flex cursor-pointer items-center justify-between gap-3"
           >
             <span className="text-sm font-medium text-foreground">
@@ -113,7 +254,11 @@ function DesktopSettingsScreen({
             </span>
             <Checkbox
               checked={autoCopyToClipboard}
-              onCheckedChange={(v) => setAutoCopyToClipboard(Boolean(v))}
+              onCheckedChange={(v) => {
+                const next = Boolean(v);
+                setAutoCopyToClipboard(next);
+                savePatch({ autoCopyToClipboard: next }, true);
+              }}
               onClick={(e) => e.stopPropagation()}
             />
           </div>
@@ -121,7 +266,11 @@ function DesktopSettingsScreen({
           <div
             role="button"
             tabIndex={0}
-            onClick={() => setCloseToTray((prev) => !prev)}
+            onClick={() => {
+              const next = !closeToTray;
+              setCloseToTray(next);
+              savePatch({ closeToTray: next }, true);
+            }}
             className="flex cursor-pointer items-center justify-between gap-3"
           >
             <span className="text-sm font-medium text-foreground">
@@ -129,7 +278,11 @@ function DesktopSettingsScreen({
             </span>
             <Checkbox
               checked={closeToTray}
-              onCheckedChange={(v) => setCloseToTray(Boolean(v))}
+              onCheckedChange={(v) => {
+                const next = Boolean(v);
+                setCloseToTray(next);
+                savePatch({ closeToTray: next }, true);
+              }}
               onClick={(e) => e.stopPropagation()}
             />
           </div>
@@ -137,7 +290,11 @@ function DesktopSettingsScreen({
           <div
             role="button"
             tabIndex={0}
-            onClick={() => setAutoStartWithOs((prev) => !prev)}
+            onClick={() => {
+              const next = !autoStartWithOs;
+              setAutoStartWithOs(next);
+              savePatch({ autoStartWithOs: next }, true);
+            }}
             className="flex cursor-pointer items-center justify-between gap-3"
           >
             <span className="text-sm font-medium text-foreground">
@@ -145,20 +302,38 @@ function DesktopSettingsScreen({
             </span>
             <Checkbox
               checked={autoStartWithOs}
-              onCheckedChange={(v) => setAutoStartWithOs(Boolean(v))}
+              onCheckedChange={(v) => {
+                const next = Boolean(v);
+                setAutoStartWithOs(next);
+                savePatch({ autoStartWithOs: next }, true);
+              }}
               onClick={(e) => e.stopPropagation()}
             />
           </div>
         </Card>
 
-        <Button type="submit" variant="default" className="mt-1 w-full">
-          {en.save}
-        </Button>
-
         {statusText ? (
           <p className="text-sm text-destructive">{statusText}</p>
         ) : null}
-      </form>
+
+        <Card className="mt-auto flex flex-col gap-1.5 bg-muted p-3">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            {en.appInfo}
+          </span>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">{en.appVersionLabel}</span>
+            <span className="font-medium text-foreground">
+              {en.appVersionValue}
+            </span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">{en.appAuthorLabel}</span>
+            <span className="font-medium text-foreground">
+              {en.appAuthorValue}
+            </span>
+          </div>
+        </Card>
+      </div>
     </DesktopFrame>
   );
 }
@@ -168,6 +343,7 @@ export async function mountSettings(
   onBack: () => void,
 ): Promise<void> {
   const settings = await api.getSettings();
+  applyTheme(settings.theme);
   const reactRoot = getOrCreateRoot(root);
   reactRoot.render(
     <DesktopSettingsScreen initialSettings={settings} onBack={onBack} />,
