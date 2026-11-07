@@ -539,6 +539,10 @@ pub(crate) fn get_history_image(
         .find(|image| image.id == id)
         .map(|image| image.file_name.clone())
         .ok_or_else(|| HostError::NotFound.to_string())?;
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    if let Ok(path) = host.store.image_file(&file_name) {
+        crate::adapters::warm_drag_thumbnail_async(path);
+    }
     let png = host.store.read_image(&file_name).map_err(text_err)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(png))
 }
