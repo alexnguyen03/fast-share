@@ -2,13 +2,21 @@ import * as React from "react";
 import {
   Check,
   CheckSquare,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   ExternalLink,
+  Eye,
   FolderOpen,
   Link2,
+  Pin,
+  PinOff,
+  RotateCcw,
   Settings as SettingsIcon,
   Smartphone,
   Trash2,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { api, type HistoryBatch, type HostStatus } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
@@ -36,6 +44,12 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "../../shared/ui/context-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "../../shared/ui/dialog";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import {
   Select,
@@ -57,6 +71,7 @@ type FlatItem = {
   phoneName: string;
   receivedAt: string;
   timeGroup: string;
+  pinned: boolean;
 };
 
 type TimeGroupSection = {
@@ -95,31 +110,233 @@ function flattenAndGroup(
   batches: HistoryBatch[],
   deviceFilter: string,
 ): { flat: FlatItem[]; groups: TimeGroupSection[] } {
-  const flat: FlatItem[] = [];
-  const groups: TimeGroupSection[] = [];
+  const raw: FlatItem[] = [];
   for (const batch of batches) {
-    if (deviceFilter !== "all" && batch.phoneName !== deviceFilter) {
+    if (
+      deviceFilter !== "all" &&
+      deviceFilter !== "pinned" &&
+      batch.phoneName !== deviceFilter
+    ) {
       continue;
     }
     const label = relativeTime(batch.receivedAt);
     for (const img of batch.images) {
-      const item: FlatItem = {
+      const pinned = Boolean(img.pinned);
+      if (deviceFilter === "pinned" && !pinned) {
+        continue;
+      }
+      raw.push({
         imageId: img.id,
         batchId: batch.id,
         phoneName: batch.phoneName,
         receivedAt: batch.receivedAt,
         timeGroup: label,
-      };
-      flat.push(item);
-      const lastGroup = groups[groups.length - 1];
-      if (lastGroup && lastGroup.label === label) {
-        lastGroup.items.push(item);
-      } else {
-        groups.push({ label, items: [item] });
-      }
+        pinned,
+      });
     }
   }
+
+  const pinnedItems = raw.filter((item) => item.pinned);
+  const regularItems = raw.filter((item) => !item.pinned);
+  const flat = [...pinnedItems, ...regularItems];
+  const groups: TimeGroupSection[] = [];
+
+  if (pinnedItems.length > 0) {
+    groups.push({
+      label: en.pinnedFilter,
+      items: pinnedItems,
+    });
+  }
+
+  for (const item of regularItems) {
+    const lastGroup = groups[groups.length - 1];
+    if (
+      lastGroup &&
+      lastGroup.label === item.timeGroup &&
+      lastGroup.label !== en.pinnedFilter
+    ) {
+      lastGroup.items.push(item);
+    } else {
+      groups.push({ label: item.timeGroup, items: [item] });
+    }
+  }
+
   return { flat, groups };
+}
+
+function LightboxModal({
+  item,
+  hasPrev,
+  hasNext,
+  onClose,
+  onPrev,
+  onNext,
+  onCopy,
+  onReveal,
+  onTogglePin,
+}: {
+  item: FlatItem | null;
+  hasPrev: boolean;
+  hasNext: boolean;
+  onClose: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+  onCopy: (id: string) => void;
+  onReveal: (id: string) => void;
+  onTogglePin: (id: string) => void;
+}): React.JSX.Element {
+  const [src, setSrc] = React.useState<string>("");
+  const [zoom, setZoom] = React.useState<number>(1);
+
+  React.useEffect(() => {
+    setZoom(1);
+    if (!item) {
+      setSrc("");
+      return;
+    }
+    let cancelled = false;
+    void loadPng(item.imageId).then((png) => {
+      if (!cancelled && png) {
+        setSrc(`data:image/png;base64,${png}`);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [item]);
+
+  return (
+    <Dialog
+      open={item !== null}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+    >
+      <DialogContent
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft" && hasPrev) {
+            event.preventDefault();
+            onPrev();
+          } else if (event.key === "ArrowRight" && hasNext) {
+            event.preventDefault();
+            onNext();
+          }
+        }}
+      >
+        <div className="pr-8">
+          <DialogTitle>{item?.phoneName ?? en.image}</DialogTitle>
+          <DialogDescription>{item?.timeGroup ?? ""}</DialogDescription>
+        </div>
+
+        <div className="relative flex h-[390px] w-full items-center justify-center overflow-auto rounded-xl bg-black/85">
+          {src ? (
+            <img
+              src={src}
+              alt={en.image}
+              style={{ transform: `scale(${zoom})`, transformOrigin: "center" }}
+              className="max-h-full max-w-full object-contain transition-transform duration-150"
+            />
+          ) : null}
+
+          {hasPrev ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              onClick={onPrev}
+              className="absolute left-2 top-1/2 h-8 w-8 -translate-y-1/2 rounded-full opacity-85 hover:opacity-100"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+          ) : null}
+
+          {hasNext ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              onClick={onNext}
+              className="absolute right-2 top-1/2 h-8 w-8 -translate-y-1/2 rounded-full opacity-85 hover:opacity-100"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          ) : null}
+        </div>
+
+        {item ? (
+          <div className="flex items-center justify-between gap-1.5">
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                title={en.zoomOut}
+                onClick={() => setZoom((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
+                className="h-8 w-8"
+              >
+                <ZoomOut className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                title={en.resetZoom}
+                onClick={() => setZoom(1)}
+                className="h-8 w-8"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                title={en.zoomIn}
+                onClick={() => setZoom((z) => Math.min(3, Number((z + 0.25).toFixed(2))))}
+                className="h-8 w-8"
+              >
+                <ZoomIn className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => onTogglePin(item.imageId)}
+              >
+                {item.pinned ? (
+                  <PinOff className="h-3.5 w-3.5" />
+                ) : (
+                  <Pin className="h-3.5 w-3.5" />
+                )}
+                <span>{item.pinned ? en.unpinImage : en.pinImage}</span>
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => onReveal(item.imageId)}
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={() => onCopy(item.imageId)}
+              >
+                <Copy className="h-3.5 w-3.5" />
+                <span>{en.copy}</span>
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function HistoryTile({
@@ -129,10 +346,12 @@ function HistoryTile({
   justCopied,
   showDeviceName,
   onSelect,
+  onPreview,
   onOpen,
   onCopyImage,
   onCopyFilePath,
   onRevealInExplorer,
+  onTogglePin,
   onEnterSelectMode,
   onDelete,
 }: {
@@ -142,10 +361,12 @@ function HistoryTile({
   justCopied: boolean;
   showDeviceName: boolean;
   onSelect: () => void;
+  onPreview: () => void;
   onOpen: () => void;
   onCopyImage: () => void;
   onCopyFilePath: () => void;
   onRevealInExplorer: () => void;
+  onTogglePin: () => void;
   onEnterSelectMode: () => void;
   onDelete: () => void;
 }): React.JSX.Element {
@@ -169,9 +390,14 @@ function HistoryTile({
         <Card
           role="button"
           tabIndex={0}
+          draggable
           title={`${item.phoneName} · ${item.timeGroup}`}
+          onDragStart={(event) => {
+            event.preventDefault();
+            void api.startFileDrag(item.imageId);
+          }}
           onClick={onSelect}
-          onDoubleClick={onOpen}
+          onDoubleClick={onPreview}
           className={cn(
             "group relative aspect-[1.15/1] w-full cursor-pointer overflow-hidden rounded-xl border-0 bg-muted p-0 transition-transform active:scale-[0.99]",
             selected && "ring-2 ring-primary",
@@ -181,8 +407,15 @@ function HistoryTile({
             <img
               src={src}
               alt={en.image}
-              className="block h-full w-full object-cover"
+              draggable={false}
+              className="block h-full w-full select-none object-cover"
             />
+          ) : null}
+
+          {item.pinned ? (
+            <div className="pointer-events-none absolute top-2 left-2 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+              <Pin className="h-3.5 w-3.5 fill-current" />
+            </div>
           ) : null}
 
           {showDeviceName ? (
@@ -214,6 +447,19 @@ function HistoryTile({
       </ContextMenuTrigger>
 
       <ContextMenuContent>
+        <ContextMenuItem onSelect={onPreview}>
+          <Eye className="h-4 w-4 opacity-75" />
+          <span>{en.lightboxPreview}</span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onTogglePin}>
+          {item.pinned ? (
+            <PinOff className="h-4 w-4 opacity-75" />
+          ) : (
+            <Pin className="h-4 w-4 opacity-75" />
+          )}
+          <span>{item.pinned ? en.unpinImage : en.pinImage}</span>
+        </ContextMenuItem>
+        <ContextMenuSeparator />
         <ContextMenuItem onSelect={onCopyImage}>
           <Copy className="h-4 w-4 opacity-75" />
           <span>{en.copyImage}</span>
@@ -262,6 +508,7 @@ function DesktopHistoryScreen({
   const [selectMode, setSelectMode] = React.useState<boolean>(false);
   const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
+  const [previewId, setPreviewId] = React.useState<string | null>(null);
   const [activeImageId, setActiveImageId] = React.useState<string | null>(
     initialBatches[0]?.images[0]?.id ?? null,
   );
@@ -308,10 +555,19 @@ function DesktopHistoryScreen({
     [batches],
   );
 
+  const hasPinnedAny = React.useMemo(
+    () => batches.some((b) => b.images.some((img) => img.pinned)),
+    [batches],
+  );
+
   const effectiveFilter =
-    deviceFilter !== "all" && !deviceNames.includes(deviceFilter)
-      ? "all"
-      : deviceFilter;
+    deviceFilter === "pinned"
+      ? hasPinnedAny
+        ? "pinned"
+        : "all"
+      : deviceFilter !== "all" && !deviceNames.includes(deviceFilter)
+        ? "all"
+        : deviceFilter;
 
   const { flat: items, groups } = React.useMemo(
     () => flattenAndGroup(batches, effectiveFilter),
@@ -322,6 +578,21 @@ function DesktopHistoryScreen({
     activeImageId && items.some((i) => i.imageId === activeImageId)
       ? activeImageId
       : (items[0]?.imageId ?? null);
+
+  const previewIndex = previewId
+    ? items.findIndex((i) => i.imageId === previewId)
+    : -1;
+  const previewItem = previewIndex >= 0 ? items[previewIndex] : null;
+
+  const handleTogglePin = React.useCallback(
+    (imageId: string) => {
+      void api.togglePinImage(imageId).then((pinned) => {
+        showToast(pinned ? en.pinnedToast : en.unpinnedToast);
+        return reload();
+      });
+    },
+    [reload],
+  );
 
   React.useEffect(() => {
     function onKey(event: KeyboardEvent): void {
@@ -342,6 +613,11 @@ function DesktopHistoryScreen({
       if (!targetId) {
         return;
       }
+      if (event.key === " ") {
+        event.preventDefault();
+        setPreviewId(targetId);
+        return;
+      }
       if (event.key === "c" || event.key === "C") {
         void api.copyHistoryImage(targetId).then(() => {
           markCopied(targetId);
@@ -349,6 +625,9 @@ function DesktopHistoryScreen({
       }
       if (event.key === "o" || event.key === "O") {
         void api.openHistoryImage(targetId);
+      }
+      if (event.key === "p" || event.key === "P") {
+        handleTogglePin(targetId);
       }
       if (event.key === "Delete") {
         if (selectMode && selectedIds.length > 0) {
@@ -373,9 +652,17 @@ function DesktopHistoryScreen({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectMode, selectedIds, currentActiveId, reload, markCopied]);
+  }, [
+    selectMode,
+    selectedIds,
+    currentActiveId,
+    reload,
+    markCopied,
+    handleTogglePin,
+  ]);
 
-  const showDeviceName = effectiveFilter === "all";
+  const showDeviceName =
+    effectiveFilter === "all" || effectiveFilter === "pinned";
 
   return (
     <DesktopFrame>
@@ -387,6 +674,9 @@ function DesktopHistoryScreen({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{en.recently}</SelectItem>
+            {hasPinnedAny ? (
+              <SelectItem value="pinned">{en.pinnedFilter}</SelectItem>
+            ) : null}
             {deviceNames.map((name) => (
               <SelectItem key={name} value={name}>
                 {name}
@@ -437,11 +727,11 @@ function DesktopHistoryScreen({
             disabled={selectedIds.length === 0}
             onClick={() => {
               if (selectedIds[0]) {
-                void api.openHistoryImage(selectedIds[0]);
+                setPreviewId(selectedIds[0]);
               }
             }}
           >
-            {en.open}
+            {en.lightboxPreview}
           </Button>
           <Button
             variant="secondary"
@@ -504,7 +794,7 @@ function DesktopHistoryScreen({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2">
         {groups.length === 0 ? (
           <p className="my-12 text-center text-[0.95rem] text-muted-foreground">
             {en.emptyHistory}
@@ -545,6 +835,10 @@ function DesktopHistoryScreen({
                             });
                           }
                         }}
+                        onPreview={() => {
+                          setActiveImageId(item.imageId);
+                          setPreviewId(item.imageId);
+                        }}
                         onOpen={() => {
                           void api.openHistoryImage(item.imageId);
                         }}
@@ -563,6 +857,9 @@ function DesktopHistoryScreen({
                         }}
                         onRevealInExplorer={() => {
                           void api.revealHistoryImage(item.imageId);
+                        }}
+                        onTogglePin={() => {
+                          handleTogglePin(item.imageId);
                         }}
                         onEnterSelectMode={() => {
                           setSelectMode(true);
@@ -625,6 +922,34 @@ function DesktopHistoryScreen({
           </Card>
         ))}
       </div>
+
+      <LightboxModal
+        item={previewItem}
+        hasPrev={previewIndex > 0}
+        hasNext={previewIndex >= 0 && previewIndex < items.length - 1}
+        onClose={() => setPreviewId(null)}
+        onPrev={() => {
+          if (previewIndex > 0) {
+            setPreviewId(items[previewIndex - 1].imageId);
+          }
+        }}
+        onNext={() => {
+          if (previewIndex >= 0 && previewIndex < items.length - 1) {
+            setPreviewId(items[previewIndex + 1].imageId);
+          }
+        }}
+        onCopy={(id) => {
+          void api.copyHistoryImage(id).then(() => {
+            markCopied(id);
+          });
+        }}
+        onReveal={(id) => {
+          void api.revealHistoryImage(id);
+        }}
+        onTogglePin={(id) => {
+          handleTogglePin(id);
+        }}
+      />
 
       <footer className="mt-auto flex items-center justify-center gap-12 pt-2">
         <Button

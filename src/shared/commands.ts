@@ -33,6 +33,7 @@ export type NearbyPc = {
 
 export type HistoryImage = {
   id: string;
+  pinned?: boolean;
 };
 
 export type HistoryBatch = {
@@ -344,6 +345,31 @@ export const api = {
       return Promise.resolve(`/preview/${imageId}.png`);
     }
     return invoke<string>("copy_history_image_path", { imageId });
+  },
+
+  togglePinImage(imageId: string): Promise<boolean> {
+    if (!inTauri()) {
+      let nextPinned = false;
+      preview.history = preview.history.map((batch) => ({
+        ...batch,
+        images: batch.images.map((image) => {
+          if (image.id === imageId) {
+            nextPinned = !image.pinned;
+            return { ...image, pinned: nextPinned };
+          }
+          return image;
+        }),
+      }));
+      return Promise.resolve(nextPinned);
+    }
+    return invoke<boolean>("toggle_pin_image", { imageId });
+  },
+
+  startFileDrag(imageId: string): Promise<void> {
+    if (!inTauri()) {
+      return Promise.resolve();
+    }
+    return invoke("start_file_drag", { imageId });
   },
 
   deleteHistoryImage(imageId: string): Promise<void> {

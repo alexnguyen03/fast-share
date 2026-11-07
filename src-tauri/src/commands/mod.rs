@@ -9,7 +9,7 @@ use crate::domain::{BatchId, DeviceId, DeviceTrust, HostError, ImageId, PcId, MA
 use crate::ports::Store;
 use crate::runtime::{qr_png, DockEdge, SharedHost, WindowPrefs};
 use crate::use_cases::{
-    accept_device, copy_image, delete_all, delete_image, forget_device, reject_device,
+    accept_device, copy_image, delete_all, delete_image, forget_device, reject_device, toggle_pin,
     update_settings,
 };
 use tauri::Emitter;
@@ -56,6 +56,7 @@ pub(crate) struct NearbyPcView {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ImageView {
     id: String,
+    pinned: bool,
 }
 
 #[derive(Serialize)]
@@ -511,6 +512,7 @@ pub(crate) fn list_history(state: tauri::State<'_, SharedHost>) -> Result<Vec<Ba
             .into_iter()
             .map(|image| ImageView {
                 id: image.id.as_str().to_string(),
+                pinned: image.pinned,
             })
             .collect();
         views.push(BatchView {
@@ -589,6 +591,38 @@ pub(crate) fn copy_history_image_path(
         }
     }
     Ok(path_str)
+}
+
+#[tauri::command]
+pub(crate) fn toggle_pin_image(
+    state: tauri::State<'_, SharedHost>,
+    image_id: String,
+) -> Result<bool, String> {
+    let mut host = state.lock().map_err(text_err)?;
+    let id = ImageId::parse(image_id).map_err(text_err)?;
+    toggle_pin(&mut host.store, &id).map_err(text_err)
+}
+
+#[tauri::command]
+pub(crate) fn start_file_drag(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, SharedHost>,
+    image_id: String,
+) -> Result<(), String> {
+    let path = history_image_path(&state, &image_id)?;
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    {
+        let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let item = drag::DragItem::Files(vec![canonical.clone()]);
+        let preview = drag::Image::File(canonical);
+        drag::start_drag(&window, item, preview, |_, _| {}, drag::Options::default())
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = (window, path);
+    }
+    Ok(())
 }
 
 fn history_image_path(
@@ -1066,6 +1100,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         open_history_image,
         reveal_history_image,
         copy_history_image_path,
+        toggle_pin_image,
+        start_file_drag,
         delete_history_image,
         delete_history,
         get_settings,

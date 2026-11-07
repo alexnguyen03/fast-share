@@ -12,11 +12,20 @@ pub fn purge_expired(
     let batches = store.list_batches()?;
     let mut removed = 0;
     let mut kept = Vec::new();
-    for batch in batches {
+    for mut batch in batches {
         if batch.received_at < cutoff {
-            for image in &batch.images {
-                store.remove_image_file(&image.file_name)?;
-                removed += 1;
+            let mut pinned_images = Vec::new();
+            for image in batch.images {
+                if image.pinned {
+                    pinned_images.push(image);
+                } else {
+                    store.remove_image_file(&image.file_name)?;
+                    removed += 1;
+                }
+            }
+            if !pinned_images.is_empty() {
+                batch.images = pinned_images;
+                kept.push(batch);
             }
             continue;
         }
@@ -24,6 +33,26 @@ pub fn purge_expired(
     }
     store.save_batches(kept)?;
     Ok(removed)
+}
+
+pub fn toggle_pin(store: &mut impl Store, image_id: &ImageId) -> Result<bool, HostError> {
+    let mut batches = store.list_batches()?;
+    let mut result = None;
+    for batch in &mut batches {
+        for image in &mut batch.images {
+            if &image.id == image_id {
+                image.pinned = !image.pinned;
+                result = Some(image.pinned);
+                break;
+            }
+        }
+        if result.is_some() {
+            break;
+        }
+    }
+    let pinned = result.ok_or(HostError::NotFound)?;
+    store.save_batches(batches)?;
+    Ok(pinned)
 }
 
 pub fn delete_image(store: &mut impl Store, image_id: &ImageId) -> Result<(), HostError> {
@@ -58,11 +87,21 @@ pub fn delete_image(store: &mut impl Store, image_id: &ImageId) -> Result<(), Ho
 
 pub fn delete_all(store: &mut impl Store) -> Result<(), HostError> {
     let batches = store.list_batches()?;
-    for batch in batches {
+    let mut kept = Vec::new();
+    for mut batch in batches {
+        let mut pinned = Vec::new();
         for image in batch.images {
-            store.remove_image_file(&image.file_name)?;
+            if image.pinned {
+                pinned.push(image);
+            } else {
+                store.remove_image_file(&image.file_name)?;
+            }
+        }
+        if !pinned.is_empty() {
+            batch.images = pinned;
+            kept.push(batch);
         }
     }
-    store.save_batches(Vec::new())?;
+    store.save_batches(kept)?;
     Ok(())
 }
