@@ -1,5 +1,16 @@
 import * as React from "react";
+import {
+  ArrowRight,
+  ArrowUpRight,
+  ChevronDown,
+  Crop,
+  Grid,
+  Type,
+  Undo2,
+  X,
+} from "lucide-react";
 import { en } from "../../shared/locales/en";
+import { cn } from "../../shared/lib/utils";
 import { markColors, type EditorTool, type Mark } from "../../shared/tools";
 import {
   AlertDialog,
@@ -30,57 +41,11 @@ type Options = {
   onSend: (batchId: string, images: string[]) => Promise<void>;
 };
 
-const icons = {
-  close: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 7l10 10M17 7L7 17" />
-    </svg>
-  ),
-  chevron: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 10l5 5 5-5" />
-    </svg>
-  ),
-  send: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M5 12h12M13 7l5 5-5 5" />
-    </svg>
-  ),
-  crop: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M8 3H4v4M16 3h4v4M8 21H4v-4M16 21h4v-4" />
-    </svg>
-  ),
-  arrow: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M7 17L17 7M10 7h7v7" />
-    </svg>
-  ),
-  blur: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="5" y="5" width="14" height="14" rx="2" />
-      <circle cx="9" cy="9" r="1" />
-      <circle cx="12" cy="9" r="1" />
-      <circle cx="15" cy="9" r="1" />
-      <circle cx="9" cy="12" r="1" />
-      <circle cx="12" cy="12" r="1" />
-      <circle cx="15" cy="12" r="1" />
-      <circle cx="9" cy="15" r="1" />
-      <circle cx="12" cy="15" r="1" />
-      <circle cx="15" cy="15" r="1" />
-    </svg>
-  ),
-  text: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6 6h12M12 6v12" />
-    </svg>
-  ),
-  undo: (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M8 8H5V5" />
-      <path d="M5 8a7 7 0 1 1-1 4" />
-    </svg>
-  ),
+const toolIcons: Record<EditorTool, React.ReactNode> = {
+  crop: <Crop className="h-4 w-4" />,
+  arrow: <ArrowUpRight className="h-4 w-4" />,
+  blur: <Grid className="h-4 w-4" />,
+  text: <Type className="h-4 w-4" />,
 };
 
 function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element {
@@ -221,19 +186,21 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   const colorLabels = [en.red, en.white, en.black];
 
   return (
-    <section className="panel editor">
-      <header className="editor-top">
+    <section className="panel editor flex min-h-screen w-full flex-col bg-background px-3.5 text-foreground">
+      <header className="grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-2.5">
         <Button
-          variant="darkSecondary"
-          className="icon-btn"
+          variant="secondary"
+          size="icon"
           aria-label={en.close}
           onClick={options.onClose}
+          className="h-10 w-10 rounded-full"
         >
-          {icons.close}
+          <X className="h-4 w-4" />
         </Button>
+
         <Button
-          variant="darkSecondary"
-          className="dest-pill"
+          variant="secondary"
+          className="h-10 min-w-0 justify-center gap-2 rounded-full px-3.5"
           onClick={() => {
             if (options.drafts.some((item) => item.marks.length > 0)) {
               setSwitchConfirmOpen(true);
@@ -242,20 +209,21 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             options.onSwitch();
           }}
         >
-          <span className={options.online ? "dot on" : "dot"} />
-          <span>{en.toComputer(options.pcName)}</span>
-          {icons.chevron}
+          <span className={options.online ? "dot on shrink-0" : "dot shrink-0"} />
+          <span className="truncate">{en.toComputer(options.pcName)}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-75" />
         </Button>
+
         <Button
-          variant="primaryBlue"
-          className="send-pill"
+          variant="default"
+          className="h-10 gap-1.5 rounded-full px-4 font-semibold"
           disabled={sending || options.drafts.length === 0}
           onClick={() => {
             void handleSend();
           }}
         >
           <span>{en.sendCount(options.drafts.length)}</span>
-          {icons.send}
+          <ArrowRight className="h-4 w-4" />
         </Button>
       </header>
 
@@ -282,10 +250,13 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
         </AlertDialogContent>
       </AlertDialog>
 
-      <div ref={stageBoxRef} className="editor-stage">
+      <div
+        ref={stageBoxRef}
+        className="editor-stage relative my-3 min-h-0 flex-1 overflow-hidden rounded-2xl bg-muted"
+      >
         <canvas
           ref={canvasRef}
-          className="stage"
+          className="stage block h-full w-full touch-none bg-transparent"
           onPointerDown={(event) => {
             const start = point(event);
             if (!currentDraft || !start) {
@@ -348,64 +319,72 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
           }}
         />
 
-        <div className="tool-dock">
+        <div className="absolute top-2.5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-full bg-popover/95 p-1.5 shadow-md backdrop-blur-sm">
           {toolButtons.map(([name, label]) => (
             <Button
               key={name}
-              variant="ghost"
+              variant={tool === name ? "default" : "ghost"}
+              size="icon"
               aria-label={label}
-              className={tool === name ? "active" : ""}
+              className="h-9 w-9 rounded-full"
               onClick={() => setTool(name)}
             >
-              {icons[name]}
+              {toolIcons[name]}
             </Button>
           ))}
-          <span className="split" />
+          <span className="mx-1 h-5 w-px bg-border" />
           <Button
             variant="ghost"
+            size="icon"
             aria-label={en.undo}
             disabled={(currentDraft?.marks.length ?? 0) === 0}
+            className="h-9 w-9 rounded-full"
             onClick={() => {
               currentDraft?.marks.pop();
               forceRender();
               paint();
             }}
           >
-            {icons.undo}
+            <Undo2 className="h-4 w-4" />
           </Button>
         </div>
 
-        <div className="editor-extra">
-          <div
-            className={
-              tool === "arrow" || tool === "text" ? "colors show" : "colors"
-            }
-          >
-            {markColors.map((value, index) => (
-              <Button
-                key={value}
-                variant="ghost"
-                title={colorLabels[index] ?? value}
-                style={{ background: value }}
-                className={color === value ? "swatch active" : "swatch"}
-                onClick={() => setColor(value)}
+        <div className="absolute top-16 right-3 left-3 z-10 flex flex-col items-center gap-2">
+          {tool === "arrow" || tool === "text" ? (
+            <div className="flex items-center gap-2 rounded-full bg-popover/95 px-2.5 py-1.5 shadow-md backdrop-blur-sm">
+              {markColors.map((value, index) => (
+                <Button
+                  key={value}
+                  variant="ghost"
+                  title={colorLabels[index] ?? value}
+                  style={{ background: value }}
+                  className={cn(
+                    "h-6 w-6 rounded-full p-0",
+                    color === value && "ring-2 ring-primary ring-offset-2",
+                  )}
+                  onClick={() => setColor(value)}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {tool === "text" ? (
+            <div className="w-full max-w-xs">
+              <Input
+                type="text"
+                maxLength={80}
+                placeholder={en.textPlaceholder}
+                value={textValue}
+                onChange={(event) => setTextValue(event.target.value)}
+                className="rounded-full bg-popover/95 shadow-md"
               />
-            ))}
-          </div>
-          <label className={tool === "text" ? "text-row show" : "text-row"}>
-            <Input
-              type="text"
-              maxLength={80}
-              placeholder={en.textPlaceholder}
-              value={textValue}
-              onChange={(event) => setTextValue(event.target.value)}
-            />
-          </label>
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <footer className="editor-foot">
-        <div className="thumbs">
+      <footer className="flex flex-col items-center gap-2">
+        <div className="flex w-full justify-center gap-2 overflow-x-auto py-0.5">
           {options.drafts.map((item, index) => (
             <ThumbButton
               key={item.id}
@@ -422,8 +401,14 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             />
           ))}
         </div>
-        <p className="hold">{en.holdToRemove}</p>
-        <p className="status">{statusLine}</p>
+        <p className="m-0 text-center text-xs text-muted-foreground">
+          {en.holdToRemove}
+        </p>
+        {statusLine ? (
+          <p className="m-0 text-center text-xs font-medium text-destructive">
+            {statusLine}
+          </p>
+        ) : null}
       </footer>
     </section>
   );
@@ -441,18 +426,14 @@ function ThumbButton({
   onRemove: () => void;
 }): React.JSX.Element {
   const timerRef = React.useRef<number>(0);
-  const classes = [
-    "thumb",
-    selected ? "selected" : "",
-    item.marks.length > 0 ? "marked" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
 
   return (
     <Button
       variant="ghost"
-      className={classes}
+      className={cn(
+        "relative h-[70px] w-[54px] overflow-hidden rounded-lg p-0 transition-opacity",
+        selected ? "opacity-100 ring-2 ring-primary" : "opacity-50",
+      )}
       onPointerDown={() => {
         timerRef.current = window.setTimeout(onRemove, 500);
       }}
@@ -460,7 +441,14 @@ function ThumbButton({
       onPointerLeave={() => window.clearTimeout(timerRef.current)}
       onClick={onSelect}
     >
-      <img src={`data:image/png;base64,${item.pngBase64}`} alt={en.image} />
+      <img
+        src={`data:image/png;base64,${item.pngBase64}`}
+        alt={en.image}
+        className="h-full w-full object-cover"
+      />
+      {item.marks.length > 0 ? (
+        <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-primary" />
+      ) : null}
     </Button>
   );
 }
@@ -513,7 +501,7 @@ function drawMark(
   image: HTMLImageElement,
 ): void {
   if (mark.tool === "crop") {
-    context.strokeStyle = "#6ea8fe";
+    context.strokeStyle = "#10b981";
     context.lineWidth = 2;
     context.strokeRect(
       view.x + mark.x * view.w,

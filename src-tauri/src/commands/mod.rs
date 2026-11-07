@@ -93,13 +93,45 @@ pub(crate) fn surface() -> &'static str {
 
 #[tauri::command]
 pub(crate) fn start_drag(window: tauri::WebviewWindow) -> Result<(), String> {
-    window.start_dragging().map_err(|error| error.to_string())
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        window.start_dragging().map_err(|error| error.to_string())
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = window;
+        Ok(())
+    }
+}
+
+fn set_window_always_on_top(window: &tauri::WebviewWindow, always_on_top: bool) {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = window.set_always_on_top(always_on_top);
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = (window, always_on_top);
+    }
+}
+
+fn begin_window_dragging(window: &tauri::WebviewWindow) {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = window.start_dragging();
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = window;
+    }
 }
 
 const EXPANDED_W: f64 = 420.0;
 const EXPANDED_H: f64 = 680.0;
 const COLLAPSED_BOX: f64 = 160.0;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const SNAP_THRESHOLD_PX: i32 = 40;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const UNDOCK_THRESHOLD_PX: i32 = 72;
 
 #[tauri::command]
@@ -130,7 +162,7 @@ pub(crate) fn set_window_prefs(
         host.window_prefs.clone()
     };
     let effective_top = prefs.always_on_top || prefs.dock_edge.is_some();
-    let _ = window.set_always_on_top(effective_top);
+    set_window_always_on_top(&window, effective_top);
     if prefs.dock_edge.is_none() {
         let _ = window.set_size(tauri::LogicalSize::new(EXPANDED_W, EXPANDED_H));
         prefs.dock_expanded = true;
@@ -234,7 +266,7 @@ pub(crate) fn undock_and_drag(
 
     let req_w = (EXPANDED_W * scale).round().max(1.0) as u32;
     let req_h = (EXPANDED_H * scale).round().max(1.0) as u32;
-    let _ = window.set_always_on_top(prefs.always_on_top);
+    set_window_always_on_top(&window, prefs.always_on_top);
     let _ = window.set_size(tauri::PhysicalSize::new(req_w, req_h));
 
     let w = req_w as i32;
@@ -265,7 +297,7 @@ pub(crate) fn undock_and_drag(
         host.window_prefs = prefs.clone();
     }
     let _ = window.emit("dock-state", &prefs);
-    let _ = window.start_dragging();
+    begin_window_dragging(&window);
     Ok(prefs)
 }
 
@@ -274,6 +306,7 @@ pub(crate) fn quit_app(app: tauri::AppHandle) {
     crate::request_quit(&app);
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub(crate) fn handle_window_moved(window: &tauri::WebviewWindow, shared: &SharedHost) {
     let Ok(pos) = window.outer_position() else {
         return;
@@ -321,7 +354,7 @@ pub(crate) fn handle_window_moved(window: &tauri::WebviewWindow, shared: &Shared
         if raw_dist > (UNDOCK_THRESHOLD_PX as f64 * scale) as i32 {
             prefs.dock_edge = None;
             prefs.dock_expanded = true;
-            let _ = window.set_always_on_top(prefs.always_on_top);
+            set_window_always_on_top(window, prefs.always_on_top);
             let _ = window.set_size(tauri::LogicalSize::new(EXPANDED_W, EXPANDED_H));
             if let Ok(mut host) = shared.lock() {
                 host.window_prefs = prefs.clone();
@@ -361,7 +394,7 @@ pub(crate) fn handle_window_moved(window: &tauri::WebviewWindow, shared: &Shared
         prefs.dock_expanded = false;
         prefs.dock_x = pos.x;
         prefs.dock_y = pos.y;
-        let _ = window.set_always_on_top(true);
+        set_window_always_on_top(window, true);
         apply_dock_geometry(window, edge, false, pos.x, pos.y);
         if let Ok(mut host) = shared.lock() {
             host.window_prefs = prefs.clone();
