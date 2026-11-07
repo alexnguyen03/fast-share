@@ -135,28 +135,6 @@
   --ring: #89b4fa;
 }
 
-html.phone {
-  --background: #0e1014;
-  --foreground: #f2f4f8;
-  --card: #1c2230;
-  --card-foreground: #f2f4f8;
-  --popover: #1c2230;
-  --popover-foreground: #f2f4f8;
-  --primary: #4c8dff;
-  --primary-foreground: #ffffff;
-  --secondary: #2a2e36;
-  --secondary-foreground: #f2f4f8;
-  --muted: #1c2230;
-  --muted-foreground: #9aa3b2;
-  --accent: #2a3040;
-  --accent-foreground: #f2f4f8;
-  --destructive: #e23d3d;
-  --destructive-foreground: #ffffff;
-  --border: #2c3444;
-  --input: #2c3444;
-  --ring: #4c8dff;
-}
-
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -215,9 +193,9 @@ html.phone {
   html.phone body,
   html.phone #app {
     height: 100%;
-    background: #0e1014;
-    color: #f2f4f8;
-    color-scheme: dark;
+    min-height: 100%;
+    background-color: var(--background);
+    color: var(--foreground);
   }
 }
 
@@ -394,17 +372,17 @@ html.phone {
   html.phone.camera-open body,
   html.phone.camera-open #app,
   html.phone.camera-open .panel {
-    background: transparent;
+    background: transparent !important;
   }
 
   .scan-hole {
     width: min(68vw, 260px);
     height: min(68vw, 260px);
     margin: 28px auto;
-    border: 2px solid #f2f4f8;
+    border: 2px solid var(--primary);
     border-radius: 18px;
     background: transparent;
-    box-shadow: 0 0 0 100vmax #0e1014;
+    box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.72);
   }
 
   html.phone.camera-open .panel > :not(.scan-hole) {

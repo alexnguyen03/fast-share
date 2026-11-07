@@ -164,6 +164,7 @@ pub fn allow_in_firewall(port: u16) -> Result<(), String> {
     }
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn is_mouse_button_down() -> bool {
     #[cfg(target_os = "windows")]
     {
