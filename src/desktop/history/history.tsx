@@ -371,6 +371,8 @@ function HistoryTile({
   onDelete: () => void;
 }): React.JSX.Element {
   const [src, setSrc] = React.useState<string>("");
+  const dragOriginRef = React.useRef<{ x: number; y: number } | null>(null);
+  const didDragRef = React.useRef<boolean>(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -392,11 +394,47 @@ function HistoryTile({
           tabIndex={0}
           draggable
           title={`${item.phoneName} · ${item.timeGroup}`}
+          onPointerDown={(event) => {
+            if (event.button === 0 && !selectMode) {
+              dragOriginRef.current = { x: event.clientX, y: event.clientY };
+              didDragRef.current = false;
+            }
+          }}
+          onPointerMove={(event) => {
+            const origin = dragOriginRef.current;
+            if (!origin || (event.buttons & 1) === 0 || selectMode) {
+              dragOriginRef.current = null;
+              return;
+            }
+            const dx = event.clientX - origin.x;
+            const dy = event.clientY - origin.y;
+            if (dx * dx + dy * dy >= 16) {
+              dragOriginRef.current = null;
+              didDragRef.current = true;
+              void api.startFileDrag(item.imageId);
+            }
+          }}
+          onPointerUp={() => {
+            dragOriginRef.current = null;
+          }}
+          onPointerCancel={() => {
+            dragOriginRef.current = null;
+          }}
           onDragStart={(event) => {
             event.preventDefault();
-            void api.startFileDrag(item.imageId);
+            dragOriginRef.current = null;
+            if (!didDragRef.current) {
+              didDragRef.current = true;
+              void api.startFileDrag(item.imageId);
+            }
           }}
-          onClick={onSelect}
+          onClick={() => {
+            if (didDragRef.current) {
+              didDragRef.current = false;
+              return;
+            }
+            onSelect();
+          }}
           onDoubleClick={onPreview}
           className={cn(
             "group relative aspect-[1.15/1] w-full cursor-pointer overflow-hidden rounded-xl border-0 bg-muted p-0 transition-transform active:scale-[0.99]",

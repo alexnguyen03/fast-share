@@ -1204,6 +1204,8 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "uuid",
+ "windows 0.52.0",
+ "windows-core 0.52.0",
 ]
 
 [[package]]

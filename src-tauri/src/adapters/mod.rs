@@ -18,5 +18,5 @@ pub use lan::{
 pub use mdns::{advertise, browse_hosts, DiscoveredHost};
 pub use os_clipboard::OsClipboard;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-pub use os_drag::start_native_file_drag;
+pub use os_drag::{start_native_file_drag, warm_drag_thumbnail_async};
 pub use os_notifier::OsNotifier;
