@@ -36,21 +36,23 @@ function wait(ms: number): Promise<void> {
 }
 
 export async function filesToBase64(files: File[]): Promise<string[]> {
-  const results: string[] = [];
-  for (const file of files) {
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () =>
-        resolve(typeof reader.result === "string" ? reader.result : "");
-      reader.onerror = () => reject(new Error("file"));
-      reader.readAsDataURL(file);
-    });
-    const comma = dataUrl.indexOf(",");
-    if (comma >= 0) {
-      results.push(dataUrl.slice(comma + 1));
-    }
-  }
-  return results;
+  const encoded = await Promise.all(
+    files.map(
+      (file) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl =
+              typeof reader.result === "string" ? reader.result : "";
+            const comma = dataUrl.indexOf(",");
+            resolve(comma >= 0 ? dataUrl.slice(comma + 1) : "");
+          };
+          reader.onerror = () => reject(new Error("file"));
+          reader.readAsDataURL(file);
+        }),
+    ),
+  );
+  return encoded.filter((item) => item.length > 0);
 }
 
 async function finishPair(

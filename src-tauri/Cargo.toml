@@ -63,3 +63,6 @@ objc2-foundation = { version = "0.3", features = ["NSFileManager", "NSString", "
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+
+[profile.dev.package."*"]
+opt-level = 2

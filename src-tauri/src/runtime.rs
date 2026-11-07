@@ -170,7 +170,8 @@ fn spawn_retention_loop(shared: SharedHost) {
 
 fn spawn_server(shared: SharedHost, cert: HostCert, bind_ip: std::net::Ipv4Addr, port: u16) {
     std::thread::spawn(move || {
-        let runtime = match tokio::runtime::Builder::new_current_thread()
+        let runtime = match tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
             .enable_all()
             .build()
         {
@@ -356,7 +357,11 @@ async fn batches(
             serde_json::json!({ "ok": true, "imageCount": image_count }),
         ));
     }
-    let validated = decode_batch_images(&body.images).map_err(error_status)?;
+    let images = body.images;
+    let validated = tokio::task::spawn_blocking(move || decode_batch_images(&images))
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
+        .map_err(error_status)?;
     let mut host = shared.lock().map_err(storage_status)?;
     let host = &mut *host;
     commit_validated_batch(

@@ -1023,45 +1023,19 @@ pub(crate) async fn send_batch(
         return Err(HostError::ImageUndecodable.to_string());
     }
     let parsed_batch_id = BatchId::parse(batch_id).map_err(text_err)?;
-    let mut decoded = Vec::new();
+    let mut cleaned = Vec::with_capacity(images.len());
     for image in images {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(image.trim())
-            .map_err(|_| HostError::ImageUndecodable.to_string())?;
-        if bytes.len() > MAX_IMAGE_BYTES {
+        let trimmed = image.trim();
+        if trimmed.is_empty() {
+            return Err(HostError::ImageUndecodable.to_string());
+        }
+        let approx_bytes = (trimmed.len() * 3) / 4;
+        if approx_bytes > MAX_IMAGE_BYTES {
             return Err(HostError::ImageTooLarge.to_string());
         }
-        decoded.push(bytes);
+        cleaned.push(trimmed.to_string());
     }
     let id = PcId::parse(pc_id).map_err(text_err)?;
-    let needs_browse = {
-        let host = state.lock().map_err(text_err)?;
-        let pc = host
-            .known_pcs
-            .iter()
-            .find(|pc| pc.pc_id == id)
-            .ok_or_else(|| HostError::NotFound.to_string())?;
-        let qr = remembered_qr(
-            &pc.pc_id,
-            &pc.name,
-            &pc.host,
-            pc.port,
-            &pc.fingerprint,
-            &pc.cert_der,
-        );
-        (host.phone.device_id.clone(), qr)
-    };
-    if !phone_client::ready(&needs_browse.1).await {
-        let discovered = tokio::task::spawn_blocking(|| {
-            crate::adapters::browse_hosts(Duration::from_millis(700))
-        })
-        .await
-        .unwrap_or_default();
-        let mut host = state.lock().map_err(text_err)?;
-        if host.apply_discovered_hosts(&discovered) {
-            let _ = host.save_phone_book();
-        }
-    }
     let (device_id, secret, qr) = {
         let host = state.lock().map_err(text_err)?;
         let pc = host
@@ -1083,9 +1057,45 @@ pub(crate) async fn send_batch(
         );
         (host.phone.device_id.clone(), secret, qr)
     };
-    phone_client::send_batch(&qr, &device_id, &secret, &parsed_batch_id, &decoded)
-        .await
-        .map_err(text_err)
+
+    match phone_client::send_batch(&qr, &device_id, &secret, &parsed_batch_id, &cleaned).await {
+        Ok(()) => Ok(()),
+        Err(
+            first_err @ (HostError::Unreachable
+            | HostError::DifferentSubnet
+            | HostError::GuestWifiOrFirewall),
+        ) => {
+            let discovered = tokio::task::spawn_blocking(|| {
+                crate::adapters::browse_hosts(Duration::from_millis(700))
+            })
+            .await
+            .unwrap_or_default();
+            let updated_qr = {
+                let mut host = state.lock().map_err(text_err)?;
+                if !host.apply_discovered_hosts(&discovered) {
+                    return Err(first_err.to_string());
+                }
+                let _ = host.save_phone_book();
+                let pc = host
+                    .known_pcs
+                    .iter()
+                    .find(|pc| pc.pc_id == id)
+                    .ok_or_else(|| HostError::NotFound.to_string())?;
+                remembered_qr(
+                    &pc.pc_id,
+                    &pc.name,
+                    &pc.host,
+                    pc.port,
+                    &pc.fingerprint,
+                    &pc.cert_der,
+                )
+            };
+            phone_client::send_batch(&updated_qr, &device_id, &secret, &parsed_batch_id, &cleaned)
+                .await
+                .map_err(text_err)
+        }
+        Err(other_err) => Err(other_err.to_string()),
+    }
 }
 
 #[tauri::command]

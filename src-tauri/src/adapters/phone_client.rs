@@ -170,15 +170,11 @@ pub async fn send_batch(
     device_id: &DeviceId,
     secret: &str,
     batch_id: &BatchId,
-    images: &[Vec<u8>],
+    encoded_images: &[String],
 ) -> Result<(), HostError> {
-    if images.is_empty() {
+    if encoded_images.is_empty() {
         return Err(HostError::ImageUndecodable);
     }
-    let encoded: Vec<String> = images
-        .iter()
-        .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
-        .collect();
     let client = pinned_client(qr, UPLOAD_TIMEOUT)?;
     let response = client
         .post(format!("https://{}:{}/batches", qr.host, qr.port))
@@ -186,7 +182,7 @@ pub async fn send_batch(
             "deviceId": device_id.as_str(),
             "secret": secret,
             "batchId": batch_id.as_str(),
-            "images": encoded,
+            "images": encoded_images,
         }))
         .send()
         .await
@@ -383,6 +379,11 @@ pub fn verify_peer_leaf(expected_fingerprint: &str, peer_leaf_der: &[u8]) -> Res
 }
 
 fn pinned_client(qr: &QrPayload, timeout: Duration) -> Result<reqwest::Client, HostError> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    static CLIENT_POOL: OnceLock<Mutex<HashMap<(String, u64), reqwest::Client>>> = OnceLock::new();
+
     require_lan_host(&qr.host)?;
     let expected = qr.fingerprint.to_ascii_lowercase();
     if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -396,6 +397,15 @@ fn pinned_client(qr: &QrPayload, timeout: Duration) -> Result<reqwest::Client, H
             return Err(HostError::NotTrusted);
         }
     }
+
+    let pool_key = (expected.clone(), timeout.as_millis() as u64);
+    let pool = CLIENT_POOL.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(guard) = pool.lock() {
+        if let Some(cached) = guard.get(&pool_key) {
+            return Ok(cached.clone());
+        }
+    }
+
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let verifier = Arc::new(PinnedVerifier {
         fingerprint: expected,
@@ -407,11 +417,18 @@ fn pinned_client(qr: &QrPayload, timeout: Duration) -> Result<reqwest::Client, H
         .dangerous()
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
-    reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .use_preconfigured_tls(tls_config)
+        .tcp_nodelay(true)
+        .pool_idle_timeout(Duration::from_secs(90))
         .timeout(timeout)
         .build()
-        .map_err(|_| HostError::Unreachable)
+        .map_err(|_| HostError::Unreachable)?;
+
+    if let Ok(mut guard) = pool.lock() {
+        guard.insert(pool_key, client.clone());
+    }
+    Ok(client)
 }
 
 async fn read_pair(response: reqwest::Response) -> Result<PairReply, HostError> {

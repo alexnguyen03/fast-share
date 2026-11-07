@@ -2,6 +2,17 @@ use crate::domain::HostError;
 
 pub trait Clipboard: Send {
     fn write_png(&self, png: &[u8]) -> Result<(), HostError>;
+
+    fn write_rgba(
+        &self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+        fallback_png: &[u8],
+    ) -> Result<(), HostError> {
+        let _ = (width, height, rgba);
+        self.write_png(fallback_png)
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
