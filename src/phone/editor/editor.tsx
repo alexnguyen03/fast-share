@@ -587,6 +587,9 @@ function drawArrow(
 }
 
 async function exportDraft(item: Draft): Promise<string> {
+  if (item.marks.length === 0) {
+    return item.pngBase64;
+  }
   const image = await loadImage(`data:image/png;base64,${item.pngBase64}`);
   const canvas = document.createElement("canvas");
   canvas.width = image.naturalWidth;
@@ -605,18 +608,9 @@ async function exportDraft(item: Draft): Promise<string> {
   const crop = [...item.marks].reverse().find((mark) => mark.tool === "crop");
   const output =
     crop && crop.tool === "crop" ? cropCanvas(canvas, crop) : canvas;
-  const blob = await new Promise<Blob | null>((resolve) =>
-    output.toBlob(resolve, "image/png"),
-  );
-  if (!blob) {
-    return item.pngBase64;
-  }
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-  let binary = "";
-  bytes.forEach((value) => {
-    binary += String.fromCharCode(value);
-  });
-  return btoa(binary);
+  const dataUrl = output.toDataURL("image/jpeg", 0.92);
+  const comma = dataUrl.indexOf(",");
+  return comma >= 0 ? dataUrl.slice(comma + 1) : item.pngBase64;
 }
 
 function cropCanvas(

@@ -33,14 +33,33 @@ pub fn decode_batch_images(encoded: &[String]) -> Result<Vec<ValidImage>, HostEr
     if encoded.is_empty() || encoded.len() > MAX_BATCH_IMAGES {
         return Err(HostError::ImageUndecodable);
     }
-    let mut validated = Vec::with_capacity(encoded.len());
-    for item in encoded {
+    if encoded.len() == 1 {
         let bytes = base64::engine::general_purpose::STANDARD
-            .decode(item.trim())
+            .decode(encoded[0].trim())
             .map_err(|_| HostError::ImageUndecodable)?;
-        validated.push(validate_image(&bytes)?);
+        return Ok(vec![validate_image(&bytes)?]);
     }
-    Ok(validated)
+
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = encoded
+            .iter()
+            .map(|item| {
+                scope.spawn(move || {
+                    let bytes = base64::engine::general_purpose::STANDARD
+                        .decode(item.trim())
+                        .map_err(|_| HostError::ImageUndecodable)?;
+                    validate_image(&bytes)
+                })
+            })
+            .collect();
+
+        let mut validated = Vec::with_capacity(handles.len());
+        for handle in handles {
+            let image = handle.join().map_err(|_| HostError::ImageUndecodable)??;
+            validated.push(image);
+        }
+        Ok(validated)
+    })
 }
 
 pub fn commit_validated_batch(
@@ -75,9 +94,8 @@ pub fn commit_validated_batch(
         .map(|s| s.auto_copy_to_clipboard)
         .unwrap_or(true);
     if count == 1 && auto_copy {
-        let file_name = &records[0].file_name;
-        let png = store.read_image(file_name)?;
-        clipboard.write_png(&png)?;
+        let first = &images[0];
+        clipboard.write_rgba(first.width, first.height, &first.rgba, &first.png)?;
     }
 
     store.insert_batch(HistoryBatch {
