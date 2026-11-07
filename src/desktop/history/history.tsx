@@ -1,12 +1,19 @@
 import * as React from "react";
 import {
   Check,
+  CheckSquare,
+  Copy,
+  ExternalLink,
+  FolderOpen,
+  Link2,
   Settings as SettingsIcon,
   Smartphone,
+  Trash2,
 } from "lucide-react";
 import { api, type HistoryBatch, type HostStatus } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
 import { cn } from "../../shared/lib/utils";
+import { applyTheme } from "../../shared/settings";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,6 +29,13 @@ import { Badge } from "../../shared/ui/badge";
 import { Button } from "../../shared/ui/button";
 import { Card } from "../../shared/ui/card";
 import { Checkbox } from "../../shared/ui/checkbox";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "../../shared/ui/context-menu";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import {
   Select,
@@ -116,6 +130,11 @@ function HistoryTile({
   showDeviceName,
   onSelect,
   onOpen,
+  onCopyImage,
+  onCopyFilePath,
+  onRevealInExplorer,
+  onEnterSelectMode,
+  onDelete,
 }: {
   item: FlatItem;
   selected: boolean;
@@ -124,6 +143,11 @@ function HistoryTile({
   showDeviceName: boolean;
   onSelect: () => void;
   onOpen: () => void;
+  onCopyImage: () => void;
+  onCopyFilePath: () => void;
+  onRevealInExplorer: () => void;
+  onEnterSelectMode: () => void;
+  onDelete: () => void;
 }): React.JSX.Element {
   const [src, setSrc] = React.useState<string>("");
 
@@ -140,53 +164,84 @@ function HistoryTile({
   }, [item.imageId]);
 
   return (
-    <Card
-      role="button"
-      tabIndex={0}
-      title={`${item.phoneName} · ${item.timeGroup}`}
-      onClick={onSelect}
-      onDoubleClick={onOpen}
-      className={cn(
-        "relative flex cursor-pointer flex-col gap-1.5 rounded-xl border-0 bg-[#f0f3ee] p-2 text-left transition-colors hover:bg-[#e7ece4]",
-        selected && "bg-[#dff2e7]",
-      )}
-    >
-      <div className="relative grid aspect-[1.15/1] w-full place-items-center overflow-hidden rounded-lg bg-white">
-        {src ? (
-          <img
-            src={src}
-            alt={en.image}
-            className="block h-full w-full object-cover"
-          />
-        ) : null}
-
-        {justCopied ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/50 text-white backdrop-blur-[1px]">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground">
-              <Check className="h-5 w-5 stroke-[2.8]" />
-            </div>
-            <span className="text-xs font-semibold">{en.copy}</span>
-          </div>
-        ) : null}
-      </div>
-
-      {selectMode ? (
-        <div
-          className="pointer-events-none absolute top-3.5 right-3.5"
-          aria-hidden="true"
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <Card
+          role="button"
+          tabIndex={0}
+          title={`${item.phoneName} · ${item.timeGroup}`}
+          onClick={onSelect}
+          onDoubleClick={onOpen}
+          className={cn(
+            "group relative aspect-[1.15/1] w-full cursor-pointer overflow-hidden rounded-xl border-0 bg-muted p-0 transition-transform active:scale-[0.99]",
+            selected && "ring-2 ring-primary",
+          )}
         >
-          <Checkbox checked={selected} />
-        </div>
-      ) : null}
+          {src ? (
+            <img
+              src={src}
+              alt={en.image}
+              className="block h-full w-full object-cover"
+            />
+          ) : null}
 
-      {showDeviceName ? (
-        <div className="flex items-center px-0.5 text-[0.75rem]">
-          <span className="truncate font-medium text-[#262c30]">
-            {item.phoneName}
-          </span>
-        </div>
-      ) : null}
-    </Card>
+          {showDeviceName ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/65 via-black/25 to-transparent px-2.5 pt-4 pb-1.5">
+              <span className="block truncate text-[0.74rem] font-medium text-white">
+                {item.phoneName}
+              </span>
+            </div>
+          ) : null}
+
+          {justCopied ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/50 text-white backdrop-blur-[1px]">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                <Check className="h-5 w-5 stroke-[2.8]" />
+              </div>
+              <span className="text-xs font-semibold">{en.copy}</span>
+            </div>
+          ) : null}
+
+          {selectMode ? (
+            <div
+              className="pointer-events-none absolute top-2.5 right-2.5"
+              aria-hidden="true"
+            >
+              <Checkbox checked={selected} />
+            </div>
+          ) : null}
+        </Card>
+      </ContextMenuTrigger>
+
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={onCopyImage}>
+          <Copy className="h-4 w-4 opacity-75" />
+          <span>{en.copyImage}</span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onCopyFilePath}>
+          <Link2 className="h-4 w-4 opacity-75" />
+          <span>{en.copyFilePath}</span>
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={onOpen}>
+          <ExternalLink className="h-4 w-4 opacity-75" />
+          <span>{en.open}</span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onRevealInExplorer}>
+          <FolderOpen className="h-4 w-4 opacity-75" />
+          <span>{en.showInExplorer}</span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onEnterSelectMode}>
+          <CheckSquare className="h-4 w-4 opacity-75" />
+          <span>{en.select}</span>
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" onSelect={onDelete}>
+          <Trash2 className="h-4 w-4" />
+          <span>{en.delete}</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -273,8 +328,13 @@ function DesktopHistoryScreen({
       const target = event.target;
       if (
         target instanceof HTMLElement &&
-        target.closest("input,textarea,[role=dialog]")
+        target.closest("input,textarea,[role=dialog],[role=menu]")
       ) {
+        return;
+      }
+      if (event.key === "Escape" && selectMode) {
+        setSelectMode(false);
+        setSelectedIds([]);
         return;
       }
       const targetId =
@@ -446,7 +506,7 @@ function DesktopHistoryScreen({
 
       <div className="min-h-0 flex-1 overflow-y-auto pr-0.5">
         {groups.length === 0 ? (
-          <p className="my-12 text-center text-[0.95rem] text-[#69737a]">
+          <p className="my-12 text-center text-[0.95rem] text-muted-foreground">
             {en.emptyHistory}
           </p>
         ) : (
@@ -454,7 +514,7 @@ function DesktopHistoryScreen({
             {groups.map((group) => (
               <div key={group.label} className="flex flex-col gap-2">
                 <div className="flex items-center justify-center">
-                  <span className="rounded-full bg-[#eef2eb] px-3 py-0.5 text-xs font-medium text-[#5c666e]">
+                  <span className="rounded-full bg-secondary px-3 py-0.5 text-xs font-medium text-muted-foreground">
                     {group.label}
                   </span>
                 </div>
@@ -488,6 +548,42 @@ function DesktopHistoryScreen({
                         onOpen={() => {
                           void api.openHistoryImage(item.imageId);
                         }}
+                        onCopyImage={() => {
+                          setActiveImageId(item.imageId);
+                          void api.copyHistoryImage(item.imageId).then(() => {
+                            markCopied(item.imageId);
+                          });
+                        }}
+                        onCopyFilePath={() => {
+                          void api
+                            .copyHistoryImagePath(item.imageId)
+                            .then(() => {
+                              showToast(en.copiedFilePath);
+                            });
+                        }}
+                        onRevealInExplorer={() => {
+                          void api.revealHistoryImage(item.imageId);
+                        }}
+                        onEnterSelectMode={() => {
+                          setSelectMode(true);
+                          setSelectedIds((prev) =>
+                            prev.includes(item.imageId)
+                              ? prev
+                              : [...prev, item.imageId],
+                          );
+                        }}
+                        onDelete={() => {
+                          imageCache.delete(item.imageId);
+                          setSelectedIds((prev) =>
+                            prev.filter((id) => id !== item.imageId),
+                          );
+                          void api
+                            .deleteHistoryImage(item.imageId)
+                            .then(() => {
+                              showToast(en.imageDeletedToast);
+                              return reload();
+                            });
+                        }}
                       />
                     );
                   })}
@@ -500,7 +596,7 @@ function DesktopHistoryScreen({
         {status.pending.map((pending) => (
           <Card
             key={pending.id}
-            className="mt-2.5 flex flex-col gap-2 border-0 bg-[#eefaf2] p-3"
+            className="mt-2.5 flex flex-col gap-2 border-0 bg-accent p-3"
           >
             <p className="text-sm font-medium">{en.acceptPhone(pending.name)}</p>
             <div className="flex gap-2">
@@ -564,10 +660,12 @@ function DesktopHistoryScreen({
 }
 
 export async function mountDesktop(root: HTMLElement): Promise<void> {
-  const [batches, status] = await Promise.all([
+  const [batches, status, settings] = await Promise.all([
     api.listHistory(),
     api.hostStatus(),
+    api.getSettings(),
   ]);
+  applyTheme(settings.theme);
   const reactRoot = getOrCreateRoot(root);
   reactRoot.render(
     <DesktopHistoryScreen

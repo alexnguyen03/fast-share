@@ -38,9 +38,9 @@ function isComputerName(name: string): boolean {
 
 function DeviceAvatar({ name }: { name: string }): React.JSX.Element {
   if (isComputerName(name)) {
-    return <Laptop className="h-5 w-5 text-[#1b2024]" />;
+    return <Laptop className="h-5 w-5 text-foreground" />;
   }
-  return <Smartphone className="h-5 w-5 text-[#d946ef]" />;
+  return <Smartphone className="h-5 w-5 text-primary" />;
 }
 
 function latestTimeForDevice(name: string, batches: HistoryBatch[]): string {
@@ -95,7 +95,7 @@ function DesktopDevicesScreen({
         >
           <ChevronLeft className="h-5 w-5" />
         </Button>
-        <h1 className="m-0 text-center text-[1.12rem] font-semibold text-[#161a1d]">
+        <h1 className="m-0 text-center text-[1.12rem] font-semibold text-foreground">
           {en.devicesTitle}
         </h1>
         <Button
@@ -112,12 +112,12 @@ function DesktopDevicesScreen({
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pt-1">
-        <h2 className="mt-1.5 mb-0.5 text-base font-semibold text-[#161a1d]">
+        <h2 className="mt-1.5 mb-0.5 text-base font-semibold text-foreground">
           {en.connected}
         </h2>
-        <Card className="flex flex-col gap-1 border-transparent bg-[#eefaf2] px-3 py-2 shadow-none">
+        <Card className="flex flex-col gap-1 border-transparent bg-accent px-3 py-2 shadow-none">
           {trustedPhones.length === 0 ? (
-            <p className="px-1 py-2.5 text-sm text-[#6b747b]">
+            <p className="px-1 py-2.5 text-sm text-muted-foreground">
               {en.noConnectedDevices}
             </p>
           ) : (
@@ -127,10 +127,10 @@ function DesktopDevicesScreen({
                 className="flex min-h-10 items-center gap-2.5 py-1"
               >
                 <DeviceAvatar name={phone.name} />
-                <span className="min-w-0 flex-1 truncate text-[0.96rem] font-medium text-[#161a1d]">
+                <span className="min-w-0 flex-1 truncate text-[0.96rem] font-medium text-foreground">
                   {phone.name}
                 </span>
-                <span className="shrink-0 text-sm text-[#7d868d]">
+                <span className="shrink-0 text-sm text-muted-foreground">
                   {latestTimeForDevice(phone.name, batches)}
                 </span>
                 <AlertDialog>
@@ -166,12 +166,12 @@ function DesktopDevicesScreen({
           )}
         </Card>
 
-        <h2 className="mt-1.5 mb-0.5 text-base font-semibold text-[#161a1d]">
+        <h2 className="mt-1.5 mb-0.5 text-base font-semibold text-foreground">
           {en.inThisLan}
         </h2>
-        <Card className="flex flex-col gap-1 border-transparent bg-[#eaeced] px-3 py-2 shadow-none">
+        <Card className="flex flex-col gap-1 border-transparent bg-muted px-3 py-2 shadow-none">
           {pendingPhones.length === 0 && lanOthers.length === 0 ? (
-            <p className="px-1 py-2.5 text-sm text-[#6b747b]">
+            <p className="px-1 py-2.5 text-sm text-muted-foreground">
               {en.noLanDevices}
             </p>
           ) : (
@@ -182,7 +182,7 @@ function DesktopDevicesScreen({
                   className="flex min-h-10 items-center gap-2.5 py-1"
                 >
                   <DeviceAvatar name={pending.name} />
-                  <span className="min-w-0 flex-1 truncate text-[0.96rem] font-medium text-[#161a1d]">
+                  <span className="min-w-0 flex-1 truncate text-[0.96rem] font-medium text-foreground">
                     {pending.name}
                   </span>
                   <div className="flex items-center gap-1.5">
@@ -216,10 +216,10 @@ function DesktopDevicesScreen({
                   className="flex min-h-10 items-center gap-2.5 py-1"
                 >
                   <DeviceAvatar name={item.name} />
-                  <span className="min-w-0 flex-1 truncate text-[0.96rem] font-medium text-[#161a1d]">
+                  <span className="min-w-0 flex-1 truncate text-[0.96rem] font-medium text-foreground">
                     {item.name}
                   </span>
-                  <span className="shrink-0 text-sm text-[#7d868d]">
+                  <span className="shrink-0 text-sm text-muted-foreground">
                     {`${item.host}:${item.port}`}
                   </span>
                 </div>
@@ -237,7 +237,7 @@ function DesktopDevicesScreen({
         </Button>
 
         {showQr ? (
-          <Card className="flex flex-col items-center gap-1 border-0 bg-[#f0f3ee] p-3">
+          <Card className="flex flex-col items-center gap-1 border-0 bg-muted p-3">
             <img
               src={`data:image/png;base64,${status.qrPngBase64}`}
               alt={en.pairPhone}
@@ -247,9 +247,9 @@ function DesktopDevicesScreen({
             <p className="mt-1 text-center text-xl font-bold tracking-[0.12em]">
               {`${en.pairCodeLabel}: ${status.pairCode}`}
             </p>
-            <p className="text-sm text-[#7d868d]">{status.lanAddress}</p>
+            <p className="text-sm text-muted-foreground">{status.lanAddress}</p>
             {status.firewallWarning ? (
-              <Card className="mt-2 flex flex-col gap-2 border-0 bg-[#eefaf2] p-2.5">
+              <Card className="mt-2 flex flex-col gap-2 border-0 bg-accent p-2.5">
                 <p className="text-xs">{en.firewallPublicWarning}</p>
                 <Button
                   variant="default"

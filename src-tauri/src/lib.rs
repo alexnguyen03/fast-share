@@ -105,7 +105,14 @@ pub fn run() {
                     let seq = MOVE_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
                     let app = window.app_handle().clone();
                     std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_millis(220));
+                        std::thread::sleep(std::time::Duration::from_millis(120));
+                        while adapters::is_mouse_button_down() {
+                            if MOVE_SEQ.load(Ordering::SeqCst) != seq {
+                                return;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(40));
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(60));
                         if MOVE_SEQ.load(Ordering::SeqCst) != seq {
                             return;
                         }

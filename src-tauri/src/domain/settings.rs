@@ -3,9 +3,23 @@ use serde::{Deserialize, Serialize};
 use super::error::HostError;
 
 pub const DEFAULT_RETENTION_DAYS: u32 = 7;
+pub const DEFAULT_THEME: &str = "emerald-light";
+
+pub const ALLOWED_THEMES: [&str; 6] = [
+    "emerald-light",
+    "solarized-light",
+    "catppuccin-latte",
+    "solarized-dark",
+    "tokyo-night",
+    "catppuccin-mocha",
+];
 
 fn default_true() -> bool {
     true
+}
+
+fn default_theme() -> String {
+    DEFAULT_THEME.to_string()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +32,8 @@ pub struct Settings {
     pub close_to_tray: bool,
     #[serde(default = "default_true")]
     pub auto_copy_to_clipboard: bool,
+    #[serde(default = "default_theme")]
+    pub theme: String,
 }
 
 impl Default for Settings {
@@ -28,6 +44,7 @@ impl Default for Settings {
             auto_start_with_os: false,
             close_to_tray: true,
             auto_copy_to_clipboard: true,
+            theme: DEFAULT_THEME.to_string(),
         }
     }
 }
@@ -42,6 +59,9 @@ pub fn settings_from_json(text: &str) -> Result<Settings, HostError> {
         settings.pc_display_name = "My PC".to_string();
     } else {
         settings.pc_display_name = settings.pc_display_name.trim().to_string();
+    }
+    if !ALLOWED_THEMES.contains(&settings.theme.as_str()) {
+        settings.theme = DEFAULT_THEME.to_string();
     }
     Ok(settings)
 }

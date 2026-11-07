@@ -78,6 +78,7 @@ const preview: Preview = {
     autoStartWithOs: false,
     closeToTray: true,
     autoCopyToClipboard: true,
+    theme: "emerald-light",
   },
   windowPrefs: {
     snapToEdge: true,
@@ -206,6 +207,22 @@ export const api = {
     return invoke<WindowPrefs>("toggle_dock_expanded");
   },
 
+  slideDocked(deltaX: number, deltaY: number): Promise<WindowPrefs> {
+    if (!inTauri()) {
+      return Promise.resolve({ ...preview.windowPrefs });
+    }
+    return invoke<WindowPrefs>("slide_docked", { deltaX, deltaY });
+  },
+
+  undockAndDrag(): Promise<WindowPrefs> {
+    if (!inTauri()) {
+      preview.windowPrefs.dockEdge = null;
+      preview.windowPrefs.dockExpanded = true;
+      return Promise.resolve({ ...preview.windowPrefs });
+    }
+    return invoke<WindowPrefs>("undock_and_drag");
+  },
+
   quitApp(): Promise<void> {
     if (!inTauri()) {
       return Promise.resolve();
@@ -313,6 +330,20 @@ export const api = {
       return Promise.resolve();
     }
     return invoke("open_history_image", { imageId });
+  },
+
+  revealHistoryImage(imageId: string): Promise<void> {
+    if (!inTauri()) {
+      return Promise.resolve();
+    }
+    return invoke("reveal_history_image", { imageId });
+  },
+
+  copyHistoryImagePath(imageId: string): Promise<string> {
+    if (!inTauri()) {
+      return Promise.resolve(`/preview/${imageId}.png`);
+    }
+    return invoke<string>("copy_history_image_path", { imageId });
   },
 
   deleteHistoryImage(imageId: string): Promise<void> {

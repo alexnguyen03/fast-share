@@ -164,6 +164,24 @@ pub fn allow_in_firewall(port: u16) -> Result<(), String> {
     }
 }
 
+pub fn is_mouse_button_down() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetAsyncKeyState(vkey: i32) -> i16;
+        }
+        const VK_LBUTTON: i32 = 0x01;
+        // SAFETY: GetAsyncKeyState is a stateless Win32 user32 query that takes a virtual-key integer code and dereferences no pointers.
+        let state = unsafe { GetAsyncKeyState(VK_LBUTTON) };
+        (state as u16 & 0x8000) != 0
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
 pub fn set_os_auto_start(enabled: bool) {
     #[cfg(target_os = "windows")]
     {
