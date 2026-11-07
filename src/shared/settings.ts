@@ -75,6 +75,14 @@ export type Settings = {
   theme: AppTheme;
 };
 
+declare global {
+  interface Window {
+    __FAST_SHARE_ANDROID__?: {
+      setSystemBars(isLightTheme: boolean, bgHex: string): void;
+    };
+  }
+}
+
 export function applyTheme(theme: string): void {
   if (typeof document === "undefined") {
     return;
@@ -83,4 +91,11 @@ export function applyTheme(theme: string): void {
     THEME_PRESETS.find((item) => item.id === theme) ?? THEME_PRESETS[0];
   document.documentElement.setAttribute("data-theme", preset.id);
   document.documentElement.classList.toggle("dark", preset.mode === "dark");
+  document.documentElement.style.colorScheme = preset.mode;
+  if (typeof window !== "undefined") {
+    window.__FAST_SHARE_ANDROID__?.setSystemBars(
+      preset.mode === "light",
+      preset.bg,
+    );
+  }
 }
