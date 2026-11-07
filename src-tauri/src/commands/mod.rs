@@ -610,15 +610,11 @@ pub(crate) fn start_file_drag(
     image_id: String,
 ) -> Result<(), String> {
     let path = history_image_path(&state, &image_id)?;
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-        let item = drag::DragItem::Files(vec![canonical.clone()]);
-        let preview = drag::Image::File(canonical);
-        drag::start_drag(&window, item, preview, |_, _| {}, drag::Options::default())
-            .map_err(|error| error.to_string())?;
+        crate::adapters::start_native_file_drag(&window, &path).map_err(text_err)?;
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _ = (window, path);
     }
