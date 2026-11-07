@@ -65,6 +65,7 @@ pub fn commit_validated_batch(
         records.push(ImageRecord {
             id: image_id,
             file_name,
+            pinned: false,
         });
     }
 

@@ -7,6 +7,8 @@ use crate::domain::{BatchId, DeviceId, HostError, ImageId, PhoneRecord, Settings
 pub struct ImageRecord {
     pub id: ImageId,
     pub file_name: String,
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

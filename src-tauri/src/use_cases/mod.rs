@@ -12,7 +12,7 @@ pub use copy_image::copy_image;
 #[cfg(test)]
 pub use ingest_batch::ingest_batch;
 pub use ingest_batch::{authorize_batch, commit_validated_batch, decode_batch_images};
-pub use purge_history::{delete_all, delete_image, purge_expired};
+pub use purge_history::{delete_all, delete_image, purge_expired, toggle_pin};
 pub use update_settings::update_settings;
 
 #[cfg(test)]
@@ -497,5 +497,42 @@ mod tests {
         .unwrap();
         assert_eq!(clipboard.count(), 0);
         assert_eq!(store.list_batches().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn pinned_images_survive_retention_purge_and_delete_all() {
+        let mut store = MemoryStore::new();
+        let (device_id, secret) = trust_phone(&mut store);
+        let clipboard = RecordingClipboard::new();
+        let notifier = RecordingNotifier::new();
+        let old = now() - chrono::Duration::days(10);
+        ingest_batch(
+            &mut store,
+            &clipboard,
+            &notifier,
+            &device_id,
+            &secret,
+            crate::domain::BatchId::generate(),
+            &[tiny_png(), tiny_png()],
+            old,
+        )
+        .unwrap();
+        let first_id = store.list_batches().unwrap()[0].images[0].id.clone();
+        assert!(toggle_pin(&mut store, &first_id).unwrap());
+
+        purge_expired(&mut store, now(), 7).unwrap();
+        let batches = store.list_batches().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].images.len(), 1);
+        assert_eq!(batches[0].images[0].id, first_id);
+
+        delete_all(&mut store).unwrap();
+        let after_delete_all = store.list_batches().unwrap();
+        assert_eq!(after_delete_all.len(), 1);
+        assert_eq!(after_delete_all[0].images[0].id, first_id);
+
+        assert!(!toggle_pin(&mut store, &first_id).unwrap());
+        delete_all(&mut store).unwrap();
+        assert!(store.list_batches().unwrap().is_empty());
     }
 }

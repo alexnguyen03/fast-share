@@ -202,6 +202,7 @@ mod tests {
                 images: vec![ImageRecord {
                     id: image_id,
                     file_name: file_name.clone(),
+                    pinned: false,
                 }],
             })
             .unwrap();
