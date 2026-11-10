@@ -27,8 +27,10 @@ pub enum HostError {
     NotFound,
     #[error("computer did not receive")]
     Unreachable,
-    #[error("two devices are on different networks (subnet mismatch / double NAT)")]
-    DifferentSubnet,
+    #[error(
+        "two devices are on different networks: this device {local} vs other {remote} (subnet mismatch / double NAT)"
+    )]
+    DifferentSubnet { local: String, remote: String },
     #[error("connection blocked by Guest Wi-Fi / AP isolation or Windows Firewall")]
     GuestWifiOrFirewall,
     #[error("mDNS multicast is filtered on this Wi-Fi; enter the computer IP:port shown under the QR code")]

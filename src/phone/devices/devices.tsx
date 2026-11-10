@@ -3,10 +3,12 @@ import { ChevronLeft, Laptop, QrCode, RefreshCw } from "lucide-react";
 import {
   api,
   type Destination,
+  type LanInfo,
   type NearbyPc,
   type PairResult,
 } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
+import { LanStatusCard, lanSummary } from "../../shared/lan-status";
 import { applyTheme } from "../../shared/settings";
 import {
   AlertDialog,
@@ -144,6 +146,7 @@ export function PhoneDevicesScreen({
 }): React.JSX.Element {
   const [known, setKnown] = React.useState<Destination[]>(initialKnown);
   const [nearbyList, setNearbyList] = React.useState<NearbyPc[]>([]);
+  const [lanInfo, setLanInfo] = React.useState<LanInfo | null>(null);
   const [scanning, setScanning] = React.useState<boolean>(false);
   const [codeValue, setCodeValue] = React.useState<string>("");
   const [addressValue, setAddressValue] = React.useState<string>("");
@@ -160,12 +163,14 @@ export function PhoneDevicesScreen({
 
   const refreshNearby = React.useCallback(async () => {
     try {
-      const [nextKnown, list] = await Promise.all([
+      const [nextKnown, list, nextLan] = await Promise.all([
         api.listKnownPcs(),
         api.discoverNearbyPcs(),
+        api.lanInfo(),
       ]);
       setKnown(nextKnown);
       setNearbyList(list);
+      setLanInfo(nextLan);
     } catch {
       setNearbyList([]);
     }
@@ -193,7 +198,15 @@ export function PhoneDevicesScreen({
     try {
       const scanner = await import("@tauri-apps/plugin-barcode-scanner");
       cancelScanRef.current = () => scanner.cancel();
-      const permission = await scanner.requestPermissions();
+      let permission = "prompt";
+      try {
+        permission = await scanner.checkPermissions();
+      } catch {
+        permission = "prompt";
+      }
+      if (permission !== "granted") {
+        permission = await scanner.requestPermissions();
+      }
       if (permission !== "granted") {
         note(en.cameraDenied);
         showToast(en.cameraDenied);
@@ -201,13 +214,28 @@ export function PhoneDevicesScreen({
       }
       note(en.scanning);
       setNoticeText(en.scanning);
+      window.__FAST_SHARE_ANDROID__?.setSystemBars(false, "#00000000");
       const scanned = await scanner.scan({
         windowed: true,
         cameraDirection: "back",
         formats: [scanner.Format.QRCode],
       });
       document.documentElement.classList.remove("camera-open");
-      note(en.qrRead);
+      let target = "";
+      try {
+        const parsed = JSON.parse(scanned.content) as { host?: unknown };
+        if (typeof parsed.host === "string") {
+          target = parsed.host;
+        }
+      } catch {
+        target = "";
+      }
+      const from = lanInfo ? lanSummary(lanInfo) : "";
+      note(
+        target
+          ? en.contactingComputer(from || en.lanThisDevice, target)
+          : en.qrRead,
+      );
       await syncHome();
       const paired = await finishPair(
         () => api.pairWithQr(scanned.content),
@@ -222,6 +250,10 @@ export function PhoneDevicesScreen({
       note(message === "cancelled" ? en.scanCancelled : message);
     } finally {
       cancelScanRef.current = null;
+      const settings = await api.getSettings().catch(() => null);
+      if (settings) {
+        applyTheme(settings.theme);
+      }
       if (leave) {
         document.documentElement.classList.remove("camera-open");
         return;
@@ -237,7 +269,8 @@ export function PhoneDevicesScreen({
     if (codeValue.length !== 6) {
       return;
     }
-    note(en.qrRead);
+    const from = lanInfo ? lanSummary(lanInfo) : en.lanThisDevice;
+    note(en.contactingComputer(from, addressValue.trim() || "mDNS"));
     await syncHome();
     const paired = await finishPair(
       () => api.pairWithCode(codeValue, addressValue),
@@ -305,6 +338,7 @@ export function PhoneDevicesScreen({
             {noticeText}
           </p>
         ) : null}
+        {lanInfo ? <LanStatusCard info={lanInfo} /> : null}
 
         <h2 className="mt-1 mb-0.5 text-sm font-semibold text-foreground">
           {en.connected}

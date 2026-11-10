@@ -138,4 +138,10 @@ export const en = {
   cameraUnavailable: "The camera is unavailable.",
   receiving: "Receiving",
   image: "Image",
+  lanThisDevice: "This device",
+  lanSubnet: "Subnet",
+  lanCompareHint:
+    "Pairing needs the same Wi-Fi subnet: the first three numbers of each IPv4 address must match.",
+  contactingComputer: (from: string, to: string) =>
+    `Contacting ${to} from ${from}.`,
 } as const;

@@ -1,7 +1,24 @@
 use std::net::Ipv4Addr;
 
+use crate::domain::HostError;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LanSnapshot {
+    pub ip: Ipv4Addr,
+    pub subnet: String,
+    pub addresses: Vec<(String, Ipv4Addr)>,
+}
+
 pub fn lan_ipv4() -> Ipv4Addr {
-    let candidates: Vec<(String, Ipv4Addr)> = if_addrs::get_if_addrs()
+    lan_snapshot().ip
+}
+
+pub fn lan_snapshot() -> LanSnapshot {
+    lan_snapshot_from(&list_ipv4_interfaces())
+}
+
+pub fn list_ipv4_interfaces() -> Vec<(String, Ipv4Addr)> {
+    if_addrs::get_if_addrs()
         .ok()
         .map(|addrs| {
             addrs
@@ -12,14 +29,48 @@ pub fn lan_ipv4() -> Ipv4Addr {
                 })
                 .collect()
         })
-        .unwrap_or_default();
-    select_lan_ipv4(&candidates).unwrap_or(Ipv4Addr::LOCALHOST)
+        .unwrap_or_default()
+}
+
+pub fn lan_snapshot_from(candidates: &[(String, Ipv4Addr)]) -> LanSnapshot {
+    let addresses: Vec<(String, Ipv4Addr)> = candidates
+        .iter()
+        .filter(|(name, ip)| is_usable_interface(name, *ip))
+        .cloned()
+        .collect();
+    let ip = select_lan_ipv4(candidates).unwrap_or(Ipv4Addr::LOCALHOST);
+    LanSnapshot {
+        subnet: subnet_24(ip),
+        ip,
+        addresses,
+    }
+}
+
+pub fn subnet_24(ip: Ipv4Addr) -> String {
+    let [a, b, c, _] = ip.octets();
+    format!("{a}.{b}.{c}.0/24")
+}
+
+pub fn reachability_error(local_ip: Ipv4Addr, target_ip: Ipv4Addr) -> HostError {
+    match classify_unreachable(local_ip, target_ip) {
+        ReachabilityReason::DifferentSubnet => HostError::DifferentSubnet {
+            local: local_ip.to_string(),
+            remote: target_ip.to_string(),
+        },
+        ReachabilityReason::GuestOrFirewall => HostError::GuestWifiOrFirewall,
+    }
 }
 
 pub fn select_lan_ipv4(candidates: &[(String, Ipv4Addr)]) -> Option<Ipv4Addr> {
-    candidates
+    let usable: Vec<&(String, Ipv4Addr)> = candidates
         .iter()
-        .find_map(|(name, ip)| is_usable_interface(name, *ip).then_some(*ip))
+        .filter(|(name, ip)| is_usable_interface(name, *ip))
+        .collect();
+    usable
+        .iter()
+        .find(|(name, _)| is_wifi_interface(name))
+        .or_else(|| usable.first())
+        .map(|(_, ip)| *ip)
 }
 
 pub fn is_usable_interface(name: &str, ip: Ipv4Addr) -> bool {
@@ -229,9 +280,28 @@ pub fn set_os_auto_start(enabled: bool) {
 
 fn is_virtual_adapter(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    ["docker", "vethernet", "vmnet", "vbox", "br-"]
+    [
+        "docker",
+        "vethernet",
+        "vmnet",
+        "vbox",
+        "br-",
+        "rmnet",
+        "ccmni",
+        "dummy",
+        "tun",
+        "ppp",
+        "clat",
+    ]
+    .iter()
+    .any(|prefix| lower.contains(prefix))
+}
+
+fn is_wifi_interface(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    ["wlan", "wifi", "wl", "wi-fi", "en0", "wlp"]
         .iter()
-        .any(|prefix| lower.contains(prefix))
+        .any(|token| lower.contains(token))
 }
 
 #[cfg(test)]
@@ -239,8 +309,8 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use super::{
-        classify_unreachable, is_private_lan_ip, is_usable_interface, same_subnet_24,
-        select_lan_ipv4, ReachabilityReason,
+        classify_unreachable, is_private_lan_ip, is_usable_interface, lan_snapshot_from,
+        reachability_error, same_subnet_24, select_lan_ipv4, ReachabilityReason,
     };
 
     #[test]
@@ -284,5 +354,50 @@ mod tests {
             classify_unreachable(phone_same_subnet, pc_lan),
             ReachabilityReason::GuestOrFirewall
         );
+    }
+
+    #[test]
+    fn wifi_is_preferred_over_cellular_when_picking_lan_ip() {
+        let candidates = vec![
+            ("rmnet0".to_string(), Ipv4Addr::new(10, 42, 0, 12)),
+            ("wlan0".to_string(), Ipv4Addr::new(192, 168, 1, 24)),
+            ("dummy0".to_string(), Ipv4Addr::new(192, 168, 1, 1)),
+        ];
+        assert_eq!(
+            select_lan_ipv4(&candidates),
+            Some(Ipv4Addr::new(192, 168, 1, 24))
+        );
+    }
+
+    #[test]
+    fn lan_snapshot_shows_ip_subnet_and_usable_addresses() {
+        let candidates = vec![
+            ("rmnet0".to_string(), Ipv4Addr::new(10, 42, 0, 12)),
+            ("wlan0".to_string(), Ipv4Addr::new(192, 168, 1, 24)),
+        ];
+        let snapshot = lan_snapshot_from(&candidates);
+        assert_eq!(snapshot.ip, Ipv4Addr::new(192, 168, 1, 24));
+        assert_eq!(snapshot.subnet, "192.168.1.0/24");
+        assert_eq!(
+            snapshot.addresses,
+            vec![("wlan0".to_string(), Ipv4Addr::new(192, 168, 1, 24))]
+        );
+    }
+
+    #[test]
+    fn reachability_error_names_both_ipv4_addresses() {
+        let error = reachability_error(
+            Ipv4Addr::new(192, 168, 0, 42),
+            Ipv4Addr::new(192, 168, 1, 10),
+        );
+        assert_eq!(
+            error,
+            crate::domain::HostError::DifferentSubnet {
+                local: "192.168.0.42".to_string(),
+                remote: "192.168.1.10".to_string(),
+            }
+        );
+        assert!(error.to_string().contains("192.168.0.42"));
+        assert!(error.to_string().contains("192.168.1.10"));
     }
 }

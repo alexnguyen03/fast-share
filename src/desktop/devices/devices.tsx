@@ -4,10 +4,12 @@ import {
   api,
   type HistoryBatch,
   type HostStatus,
+  type LanInfo,
   type NearbyPc,
   type PhoneView,
 } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
+import { LanStatusCard } from "../../shared/lan-status";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -53,31 +55,37 @@ function DesktopDevicesScreen({
   initialStatus,
   initialBatches,
   initialNearby,
+  initialLan,
   onBack,
 }: {
   initialPhones: PhoneView[];
   initialStatus: HostStatus;
   initialBatches: HistoryBatch[];
   initialNearby: NearbyPc[];
+  initialLan: LanInfo;
   onBack: () => void;
 }): React.JSX.Element {
   const [phones, setPhones] = React.useState<PhoneView[]>(initialPhones);
   const [status, setStatus] = React.useState<HostStatus>(initialStatus);
   const [batches, setBatches] = React.useState<HistoryBatch[]>(initialBatches);
   const [nearby, setNearby] = React.useState<NearbyPc[]>(initialNearby);
+  const [lanInfo, setLanInfo] = React.useState<LanInfo>(initialLan);
   const [showQr, setShowQr] = React.useState<boolean>(false);
 
   const refresh = React.useCallback(async () => {
-    const [nextPhones, nextStatus, nextBatches, nextNearby] = await Promise.all([
-      api.listPhones(),
-      api.hostStatus(),
-      api.listHistory(),
-      api.discoverNearbyPcs().catch(() => [] as NearbyPc[]),
-    ]);
+    const [nextPhones, nextStatus, nextBatches, nextNearby, nextLan] =
+      await Promise.all([
+        api.listPhones(),
+        api.hostStatus(),
+        api.listHistory(),
+        api.discoverNearbyPcs().catch(() => [] as NearbyPc[]),
+        api.lanInfo(),
+      ]);
     setPhones(nextPhones);
     setStatus(nextStatus);
     setBatches(nextBatches);
     setNearby(nextNearby);
+    setLanInfo(nextLan);
   }, []);
 
   const trustedPhones = phones.filter((p) => p.trust === "trusted");
@@ -112,6 +120,7 @@ function DesktopDevicesScreen({
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pt-1">
+        <LanStatusCard info={lanInfo} />
         <h2 className="mt-1.5 mb-0.5 text-base font-semibold text-foreground">
           {en.connected}
         </h2>
@@ -248,6 +257,9 @@ function DesktopDevicesScreen({
               {`${en.pairCodeLabel}: ${status.pairCode}`}
             </p>
             <p className="text-sm text-muted-foreground">{status.lanAddress}</p>
+            <p className="text-xs text-muted-foreground">
+              {`${en.lanThisDevice}: ${lanInfo.ip}  ·  ${en.lanSubnet}: ${lanInfo.subnet}`}
+            </p>
             {status.firewallWarning ? (
               <Card className="mt-2 flex flex-col gap-2 border-0 bg-accent p-2.5">
                 <p className="text-xs">{en.firewallPublicWarning}</p>
@@ -273,11 +285,12 @@ export async function mountPhones(
   root: HTMLElement,
   onBack: () => void,
 ): Promise<void> {
-  const [phones, status, batches, nearby] = await Promise.all([
+  const [phones, status, batches, nearby, lan] = await Promise.all([
     api.listPhones(),
     api.hostStatus(),
     api.listHistory(),
     api.discoverNearbyPcs().catch(() => [] as NearbyPc[]),
+    api.lanInfo(),
   ]);
   const reactRoot = getOrCreateRoot(root);
   reactRoot.render(
@@ -286,6 +299,7 @@ export async function mountPhones(
       initialStatus={status}
       initialBatches={batches}
       initialNearby={nearby}
+      initialLan={lan}
       onBack={onBack}
     />,
   );

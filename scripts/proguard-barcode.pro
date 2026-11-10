@@ -1,0 +1,9 @@
+-keep class androidx.camera.** { *; }
+-keep class androidx.camera.core.** { *; }
+-keep class androidx.camera.lifecycle.** { *; }
+-keep class androidx.camera.view.** { *; }
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_vision_barcode.** { *; }
+-keep class app.tauri.barcodescanner.** { *; }
+-dontwarn androidx.camera.**
+-dontwarn com.google.mlkit.**

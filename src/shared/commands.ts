@@ -31,6 +31,12 @@ export type NearbyPc = {
   paired: boolean;
 };
 
+export type LanInfo = {
+  ip: string;
+  subnet: string;
+  addresses: { name: string; ip: string }[];
+};
+
 export type HistoryImage = {
   id: string;
   pinned?: boolean;
@@ -264,6 +270,17 @@ export const api = {
       return Promise.resolve();
     }
     return invoke("allow_firewall");
+  },
+
+  lanInfo(): Promise<LanInfo> {
+    if (!inTauri()) {
+      return Promise.resolve({
+        ip: "192.168.1.24",
+        subnet: "192.168.1.0/24",
+        addresses: [{ name: "Wi-Fi", ip: "192.168.1.24" }],
+      });
+    }
+    return invoke<LanInfo>("lan_info");
   },
 
   listPhones(): Promise<PhoneView[]> {

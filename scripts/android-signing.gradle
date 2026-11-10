@@ -1,0 +1,49 @@
+import java.util.Properties
+
+def debugStore = file("${System.getProperty("user.home")}/.android/debug.keystore")
+def propsFile = rootProject.file("keystore.properties")
+
+android {
+    signingConfigs {
+        debug {
+            enableV1Signing true
+            enableV2Signing true
+        }
+        create("release") {
+            enableV1Signing true
+            enableV2Signing true
+            if (propsFile.exists()) {
+                def props = new Properties()
+                propsFile.withInputStream { props.load(it) }
+                keyAlias = props["keyAlias"]
+                keyPassword = props["password"]
+                storeFile = file(props["storeFile"])
+                storePassword = props["password"]
+            } else if (debugStore.exists()) {
+                storeFile = debugStore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+            jniDebuggable false
+            packaging {
+                jniLibs {
+                    keepDebugSymbols.clear()
+                }
+            }
+        }
+        release {
+            if (signingConfigs.release.storeFile != null) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled false
+            shrinkResources false
+            proguardFile file("../../../../scripts/proguard-barcode.pro")
+        }
+    }
+}
