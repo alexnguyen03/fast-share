@@ -1,6 +1,5 @@
 import AppIntents
 import UIKit
-import UniformTypeIdentifiers
 
 @available(iOS 16.0, *)
 private enum FastShareIntentError: Error, CustomLocalizedStringResourceConvertible {
@@ -33,7 +32,7 @@ struct SendImagesIntent: AppIntent {
     @Parameter(
         title: "Images",
         description: "Screenshots or images to send.",
-        supportedTypeIdentifiers: [UTType.image.identifier]
+        supportedTypeIdentifiers: ["public.image"]
     )
     var images: [IntentFile]
 
@@ -60,8 +59,7 @@ struct SendImagesIntent: AppIntent {
             let destination = incoming.appendingPathComponent(name)
             try? FileManager.default.removeItem(at: destination)
 
-            guard let data = image.data,
-                  let sourceImage = UIImage(data: data),
+            guard let sourceImage = UIImage(data: image.data),
                   let jpeg = sourceImage.jpegData(compressionQuality: 0.92)
             else {
                 continue
@@ -87,7 +85,8 @@ struct SendImagesIntent: AppIntent {
 
 @available(iOS 16.0, *)
 struct FastShareShortcutsProvider: AppShortcutsProvider {
-    static var appShortcuts: [AppShortcut] { [
+    @AppShortcutsBuilder
+    static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: SendImagesIntent(),
             phrases: [
@@ -96,6 +95,6 @@ struct FastShareShortcutsProvider: AppShortcutsProvider {
             ],
             shortTitle: "Send images",
             systemImageName: "paperplane.fill"
-        ),
-    ] }
+        )
+    }
 }
