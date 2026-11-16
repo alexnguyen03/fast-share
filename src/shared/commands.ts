@@ -31,6 +31,12 @@ export type NearbyPc = {
   paired: boolean;
 };
 
+export type LanInfo = {
+  ip: string;
+  subnet: string;
+  addresses: { name: string; ip: string }[];
+};
+
 export type HistoryImage = {
   id: string;
   pinned?: boolean;
@@ -53,6 +59,11 @@ export type PairResult = {
   status: "pending" | "trusted" | "rejected" | "needs_forget";
 };
 
+export type PhoneIdentity = {
+  deviceId: string;
+  name: string;
+};
+
 export type WindowPrefs = {
   snapToEdge: boolean;
   alwaysOnTop: boolean;
@@ -70,6 +81,7 @@ type Preview = {
   images: Record<string, string>;
   destinations: Destination[];
   paired: boolean;
+  phoneIdentity: PhoneIdentity;
 };
 
 const preview: Preview = {
@@ -100,6 +112,7 @@ const preview: Preview = {
     { pcId: "pc-home-1", name: "Home laptop", online: true },
   ],
   paired: true,
+  phoneIdentity: { deviceId: "phone-preview", name: "My iPhone" },
 };
 
 function inTauri(): boolean {
@@ -266,6 +279,17 @@ export const api = {
     return invoke("allow_firewall");
   },
 
+  lanInfo(): Promise<LanInfo> {
+    if (!inTauri()) {
+      return Promise.resolve({
+        ip: "192.168.1.24",
+        subnet: "192.168.1.0/24",
+        addresses: [{ name: "Wi-Fi", ip: "192.168.1.24" }],
+      });
+    }
+    return invoke<LanInfo>("lan_info");
+  },
+
   listPhones(): Promise<PhoneView[]> {
     if (!inTauri()) {
       return Promise.resolve(preview.phones);
@@ -413,6 +437,21 @@ export const api = {
       return [await samplePng("One", "#e23d3d"), await samplePng("Two", "#6ea8fe")];
     }
     return invoke<string[]>("take_shared_images");
+  },
+
+  phoneIdentity(): Promise<PhoneIdentity> {
+    if (!inTauri()) {
+      return Promise.resolve({ ...preview.phoneIdentity });
+    }
+    return invoke<PhoneIdentity>("phone_identity");
+  },
+
+  setPhoneName(name: string): Promise<void> {
+    if (!inTauri()) {
+      preview.phoneIdentity.name = name.trim();
+      return Promise.resolve();
+    }
+    return invoke("set_phone_name", { name });
   },
 
   listKnownPcs(): Promise<Destination[]> {

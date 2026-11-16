@@ -44,6 +44,21 @@ pub(crate) struct HostStatus {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct LanAddressView {
+    name: String,
+    ip: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LanInfoView {
+    ip: String,
+    subnet: String,
+    addresses: Vec<LanAddressView>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct NearbyPcView {
     pc_id: String,
     name: String,
@@ -479,6 +494,23 @@ pub(crate) fn host_status(state: tauri::State<'_, SharedHost>) -> Result<HostSta
         pending,
         trusted_count,
     })
+}
+
+#[tauri::command]
+pub(crate) fn lan_info() -> LanInfoView {
+    let snapshot = crate::adapters::lan_snapshot();
+    LanInfoView {
+        ip: snapshot.ip.to_string(),
+        subnet: snapshot.subnet,
+        addresses: snapshot
+            .addresses
+            .into_iter()
+            .map(|(name, ip)| LanAddressView {
+                name,
+                ip: ip.to_string(),
+            })
+            .collect(),
+    }
 }
 
 #[tauri::command]
@@ -1062,7 +1094,7 @@ pub(crate) async fn send_batch(
         Ok(()) => Ok(()),
         Err(
             first_err @ (HostError::Unreachable
-            | HostError::DifferentSubnet
+            | HostError::DifferentSubnet { .. }
             | HostError::GuestWifiOrFirewall),
         ) => {
             let discovered = tokio::task::spawn_blocking(|| {
@@ -1133,6 +1165,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         undock_and_drag,
         quit_app,
         host_status,
+        lan_info,
         list_phones,
         accept_phone,
         reject_phone,

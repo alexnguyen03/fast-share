@@ -104,6 +104,12 @@ export function DesktopFrame({
             role="button"
             tabIndex={0}
             aria-label={en.appName}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                void api.toggleDockExpanded().then(setPrefs);
+              }
+            }}
             onPointerDown={(event) => {
               if (event.button !== 0) {
                 return;
@@ -194,13 +200,13 @@ export function DesktopFrame({
               dragStateRef.current.active = false;
             }}
             className={cn(
-              "flex shrink-0 cursor-grab select-none items-center justify-center bg-primary text-primary-foreground active:cursor-grabbing",
+              "flex shrink-0 cursor-grab select-none items-center justify-center bg-primary text-primary-foreground focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none active:cursor-grabbing",
               tabShapeClass,
             )}
           >
             <span
               className={cn(
-                "pointer-events-none whitespace-nowrap text-[0.98rem] font-bold tracking-[0.04em]",
+                "pointer-events-none whitespace-nowrap text-base font-bold tracking-[0.04em]",
                 !isHorizontal && "[writing-mode:vertical-rl] rotate-180",
               )}
             >

@@ -14,8 +14,8 @@ pub use fs_store::FsStore;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use lan::is_mouse_button_down;
 pub use lan::{
-    allow_in_firewall, classify_unreachable, firewall_warning, lan_ipv4, set_os_auto_start,
-    ReachabilityReason,
+    allow_in_firewall, firewall_warning, lan_ipv4, lan_snapshot, reachability_error,
+    set_os_auto_start,
 };
 pub use mdns::{advertise, browse_hosts, DiscoveredHost};
 pub use os_clipboard::OsClipboard;

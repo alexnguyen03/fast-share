@@ -98,7 +98,22 @@ npm run tauri android dev
 
 `tauri android dev` installs the phone UI on an emulator or a USB device. Use it to scan a computer QR code and confirm the computer is listed. Sending from the Android share sheet is not wired up yet.
 
-`npm run tauri android build` writes the APK and AAB under `src-tauri/gen/android`.
+To put a sideload APK on a real phone:
+
+```bash
+npm run tauri android init
+npm run android:apk
+```
+
+That signs an arm64 release APK with the local Android debug keystore (needed because Android will not install an unsigned package). The file is:
+
+`src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`
+
+Do not install `*-unsigned.apk` or the debug APK. A plain `tauri android build` without this script writes an unsigned package. The debug APK keeps unstripped JNI symbols and is hundreds of megabytes, so My Files on a phone often fails the install.
+
+Copy `app-universal-release.apk` to the phone. On Samsung One UI there is no global Chrome “unknown sources” toggle: turn off Settings → Security and privacy → Auto Blocker, open the APK in My Files, and allow My Files to install unknown apps. Uninstall any earlier Fast Share build first if the signature does not match.
+
+Run `npm run android:apk` again after `tauri android init`. The init regenerates `src-tauri/gen/android`, and the npm script reattaches signing.
 
 ## Device builds
 

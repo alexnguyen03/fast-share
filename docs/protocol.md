@@ -19,8 +19,8 @@ The phone rejects the payload when the fingerprint does not match `certDer`, the
 
 Alongside the QR code, the computer also shows a one-time 6-digit pairing code and its `IP:port`. A phone without a camera (or on an emulator) can enter that 6-digit code: it discovers the computer via mDNS (`_fastshare._tcp.local.`) or connects to the entered `IP:port` and calls `POST /pair/code` with `code`, `deviceId`, and `name`. The response returns the pairing status along with `pcId`, `name`, `fingerprint`, and `certDer` so the phone pins that certificate for all future requests.
 
-When a connection fails, the phone reports the specific LAN cause:
-- Different subnet / double NAT when the phone IPv4 and computer IPv4 are on different `/24` networks.
+The desktop Devices screen and the phone Devices screen both show this device's IPv4 address, `/24` subnet, and usable interface list so a subnet mismatch is visible before pairing. When a connection fails, the phone reports the specific LAN cause:
+- Different subnet / double NAT when the phone IPv4 and computer IPv4 are on different `/24` networks. The error names both addresses. Cellular / `rmnet` interfaces are ignored when choosing the phone's LAN IP.
 - Guest Wi-Fi / AP isolation or Windows Firewall when both devices are on the same subnet (`192.168.1.x`) but TCP is blocked.
 - Filtered multicast (IGMP snooping) when mDNS returns no hosts on Wi-Fi, prompting the user to enter the `IP:port` shown under the QR code.
 - On Windows, if the active network profile is `Public` and no inbound firewall rule exists for Fast Share, the desktop UI warns the user and offers a one-click action to add the firewall rule.

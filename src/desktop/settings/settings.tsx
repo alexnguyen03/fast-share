@@ -106,7 +106,7 @@ function DesktopSettingsScreen({
         >
           <ChevronLeft className="h-5 w-5" />
         </Button>
-        <h1 className="m-0 text-center text-[1.12rem] font-semibold text-foreground">
+        <h1 className="m-0 text-center text-lg font-semibold text-foreground">
           {en.settings}
         </h1>
         <Button
@@ -240,8 +240,6 @@ function DesktopSettingsScreen({
 
         <Card className="flex flex-col gap-3 bg-muted p-3">
           <div
-            role="button"
-            tabIndex={0}
             onClick={() => {
               const next = !autoCopyToClipboard;
               setAutoCopyToClipboard(next);
@@ -264,8 +262,6 @@ function DesktopSettingsScreen({
           </div>
 
           <div
-            role="button"
-            tabIndex={0}
             onClick={() => {
               const next = !closeToTray;
               setCloseToTray(next);
@@ -288,8 +284,6 @@ function DesktopSettingsScreen({
           </div>
 
           <div
-            role="button"
-            tabIndex={0}
             onClick={() => {
               const next = !autoStartWithOs;
               setAutoStartWithOs(next);

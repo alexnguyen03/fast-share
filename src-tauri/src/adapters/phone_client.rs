@@ -42,11 +42,7 @@ struct PairCodeBody {
 
 fn connection_error(host: &str) -> HostError {
     if let Ok(target_ip) = host.parse::<std::net::Ipv4Addr>() {
-        let local_ip = crate::adapters::lan_ipv4();
-        return match crate::adapters::classify_unreachable(local_ip, target_ip) {
-            crate::adapters::ReachabilityReason::DifferentSubnet => HostError::DifferentSubnet,
-            crate::adapters::ReachabilityReason::GuestOrFirewall => HostError::GuestWifiOrFirewall,
-        };
+        return crate::adapters::reachability_error(crate::adapters::lan_ipv4(), target_ip);
     }
     HostError::Unreachable
 }
