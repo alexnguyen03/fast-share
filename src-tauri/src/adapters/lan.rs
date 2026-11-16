@@ -62,15 +62,47 @@ pub fn reachability_error(local_ip: Ipv4Addr, target_ip: Ipv4Addr) -> HostError 
 }
 
 pub fn select_lan_ipv4(candidates: &[(String, Ipv4Addr)]) -> Option<Ipv4Addr> {
+    select_lan_ipv4_with(candidates, preferred_route_ip())
+}
+
+fn select_lan_ipv4_with(
+    candidates: &[(String, Ipv4Addr)],
+    preferred: Option<Ipv4Addr>,
+) -> Option<Ipv4Addr> {
     let usable: Vec<&(String, Ipv4Addr)> = candidates
         .iter()
         .filter(|(name, ip)| is_usable_interface(name, *ip))
         .collect();
-    usable
-        .iter()
-        .find(|(name, _)| is_wifi_interface(name))
-        .or_else(|| usable.first())
-        .map(|(_, ip)| *ip)
+    let by_route =
+        || preferred.and_then(|ip| usable.iter().find(|(_, candidate)| *candidate == ip).map(|e| e.1));
+    let by_wifi = || {
+        usable
+            .iter()
+            .find(|(name, _)| is_wifi_interface(name))
+            .map(|(_, ip)| *ip)
+    };
+    let first = || usable.first().map(|(_, ip)| *ip);
+    // The phone must stay on Wi-Fi so it never advertises a cellular interface.
+    // The computer prefers the interface that actually carries the default route.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        by_wifi().or_else(by_route).or_else(first)
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        by_route().or_else(by_wifi).or_else(first)
+    }
+}
+
+/// The IPv4 address an outbound UDP socket would use. Connecting a UDP socket
+/// sends no packets; it only asks the routing table for the source address.
+fn preferred_route_ip() -> Option<Ipv4Addr> {
+    let socket = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    socket.connect(("192.0.2.1", 9)).ok()?;
+    match socket.local_addr().ok()?.ip() {
+        std::net::IpAddr::V4(ip) if !ip.is_loopback() && !ip.is_unspecified() => Some(ip),
+        _ => None,
+    }
 }
 
 pub fn is_usable_interface(name: &str, ip: Ipv4Addr) -> bool {
@@ -290,8 +322,28 @@ fn is_virtual_adapter(name: &str) -> bool {
         "ccmni",
         "dummy",
         "tun",
+        "tap",
         "ppp",
         "clat",
+        "virtual",
+        "openvpn",
+        "wireguard",
+        "wintun",
+        "tailscale",
+        "zerotier",
+        "nordlynx",
+        "proton",
+        "surfshark",
+        "expressvpn",
+        "mullvad",
+        "hamachi",
+        "radmin",
+        "npcap",
+        "isatap",
+        "teredo",
+        "6to4",
+        "wi-fi direct",
+        "bluetooth",
     ]
     .iter()
     .any(|prefix| lower.contains(prefix))
@@ -310,7 +362,8 @@ mod tests {
 
     use super::{
         classify_unreachable, is_private_lan_ip, is_usable_interface, lan_snapshot_from,
-        reachability_error, same_subnet_24, select_lan_ipv4, ReachabilityReason,
+        reachability_error, same_subnet_24, select_lan_ipv4, select_lan_ipv4_with,
+        ReachabilityReason,
     };
 
     #[test]
@@ -335,6 +388,47 @@ mod tests {
         assert_eq!(
             select_lan_ipv4(&candidates),
             Some(Ipv4Addr::new(192, 168, 1, 24))
+        );
+    }
+
+    #[test]
+    fn vpn_and_virtual_adapters_never_become_the_lan_ip() {
+        assert!(!is_usable_interface(
+            "OpenVPN Connect DCO Adapter",
+            Ipv4Addr::new(10, 8, 0, 2)
+        ));
+        assert!(!is_usable_interface(
+            "Tailscale",
+            Ipv4Addr::new(10, 1, 2, 3)
+        ));
+        assert!(!is_usable_interface(
+            "WireGuard Tunnel",
+            Ipv4Addr::new(10, 6, 0, 2)
+        ));
+        assert!(!is_usable_interface(
+            "Wi-Fi Direct Virtual Adapter",
+            Ipv4Addr::new(192, 168, 137, 1)
+        ));
+        assert!(is_usable_interface(
+            "Ethernet",
+            Ipv4Addr::new(192, 168, 1, 27)
+        ));
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[test]
+    fn the_default_route_interface_beats_enumeration_order() {
+        let candidates = vec![
+            ("Ethernet".to_string(), Ipv4Addr::new(192, 168, 1, 27)),
+            ("Wi-Fi".to_string(), Ipv4Addr::new(192, 168, 1, 28)),
+        ];
+        assert_eq!(
+            select_lan_ipv4_with(&candidates, Some(Ipv4Addr::new(192, 168, 1, 28))),
+            Some(Ipv4Addr::new(192, 168, 1, 28))
+        );
+        assert_eq!(
+            select_lan_ipv4_with(&candidates, Some(Ipv4Addr::new(10, 8, 0, 2))),
+            Some(Ipv4Addr::new(192, 168, 1, 28))
         );
     }
 

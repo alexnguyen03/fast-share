@@ -1,7 +1,11 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::domain::{require_lan_host, HostError};
+
+static ADVERTISER: OnceLock<mdns_sd::ServiceDaemon> = OnceLock::new();
+static ADVERTISED_SERVICE: Mutex<Option<String>> = Mutex::new(None);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DiscoveredHost {
@@ -12,10 +16,17 @@ pub struct DiscoveredHost {
     pub fingerprint: String,
 }
 
-pub fn advertise(pc_id: &str, name: &str, port: u16, fingerprint: &str) -> Result<(), HostError> {
-    let ip = super::lan_ipv4();
-    let daemon =
-        mdns_sd::ServiceDaemon::new().map_err(|error| HostError::Storage(error.to_string()))?;
+/// Register (or re-register) the host on the given LAN address. A rebind after
+/// an IP change calls this again so the previous record with the stale address
+/// is withdrawn instead of lingering on the network.
+pub fn advertise(
+    ip: Ipv4Addr,
+    pc_id: &str,
+    name: &str,
+    port: u16,
+    fingerprint: &str,
+) -> Result<(), HostError> {
+    let daemon = advertiser_daemon()?;
     let host = format!("{pc_id}.local.");
     let instance = format!("fast-share-{pc_id}");
     let properties = [("id", pc_id), ("name", name), ("fp", fingerprint)];
@@ -28,12 +39,32 @@ pub fn advertise(pc_id: &str, name: &str, port: u16, fingerprint: &str) -> Resul
         &properties[..],
     )
     .map_err(|error| HostError::Storage(error.to_string()))?;
+    let fullname = service.get_fullname().to_string();
+    let mut current = ADVERTISED_SERVICE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(previous) = current.take() {
+        // Same service name: mdns-sd rejects a duplicate registration, so
+        // withdraw the old record before publishing the new address.
+        let _ = daemon.unregister(&previous);
+    }
     daemon
         .register(service)
         .map_err(|error| HostError::Storage(error.to_string()))?;
-    // The daemon unregisters the service when dropped. Keep it for the process lifetime.
-    std::mem::forget(daemon);
+    *current = Some(fullname);
     Ok(())
+}
+
+fn advertiser_daemon() -> Result<&'static mdns_sd::ServiceDaemon, HostError> {
+    if let Some(daemon) = ADVERTISER.get() {
+        return Ok(daemon);
+    }
+    let daemon = mdns_sd::ServiceDaemon::new()
+        .map_err(|error| HostError::Storage(error.to_string()))?;
+    let _ = ADVERTISER.set(daemon);
+    ADVERTISER
+        .get()
+        .ok_or_else(|| HostError::Storage("mDNS daemon unavailable".to_string()))
 }
 
 pub fn browse_hosts(timeout: Duration) -> Vec<DiscoveredHost> {

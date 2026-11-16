@@ -497,11 +497,18 @@ pub(crate) fn host_status(state: tauri::State<'_, SharedHost>) -> Result<HostSta
 }
 
 #[tauri::command]
-pub(crate) fn lan_info() -> LanInfoView {
+pub(crate) fn lan_info(state: tauri::State<'_, SharedHost>) -> Result<LanInfoView, String> {
     let snapshot = crate::adapters::lan_snapshot();
-    LanInfoView {
-        ip: snapshot.ip.to_string(),
-        subnet: snapshot.subnet,
+    let ip = if cfg!(any(target_os = "android", target_os = "ios")) {
+        snapshot.ip
+    } else {
+        // Show the address the listener is actually bound to, not a live probe
+        // that can disagree with the socket until the watcher rebinds.
+        state.lock().map_err(text_err)?.bind_ip
+    };
+    Ok(LanInfoView {
+        ip: ip.to_string(),
+        subnet: crate::adapters::subnet_24(ip),
         addresses: snapshot
             .addresses
             .into_iter()
@@ -510,7 +517,7 @@ pub(crate) fn lan_info() -> LanInfoView {
                 ip: ip.to_string(),
             })
             .collect(),
-    }
+    })
 }
 
 #[tauri::command]

@@ -15,7 +15,7 @@ pub use fs_store::FsStore;
 pub use lan::is_mouse_button_down;
 pub use lan::{
     allow_in_firewall, firewall_warning, lan_ipv4, lan_snapshot, reachability_error,
-    set_os_auto_start,
+    set_os_auto_start, subnet_24,
 };
 pub use mdns::{advertise, browse_hosts, DiscoveredHost};
 pub use os_clipboard::OsClipboard;
