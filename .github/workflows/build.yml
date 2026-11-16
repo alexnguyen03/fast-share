@@ -11,6 +11,7 @@ on:
       - "src/**"
       - "src-tauri/**"
       - "share-extension/**"
+      - "app-intents/**"
       - "scripts/**"
       - "vite.config.ts"
       - "tsconfig.json"
@@ -83,6 +84,8 @@ jobs:
         run: npm run tauri ios init -- --ci
       - name: Attach the share extension
         run: bash scripts/setup-ios-share-extension.sh
+      - name: Attach the App Intent
+        run: bash scripts/setup-ios-app-intents.sh
       - name: Build the unsigned IPA
         run: npm run tauri ios build -- --no-sign --ci
       - name: Collect the IPA
@@ -169,6 +172,8 @@ jobs:
         run: npm run tauri ios init -- --ci
       - name: Attach the share extension
         run: bash scripts/setup-ios-share-extension.sh
+      - name: Attach the App Intent
+        run: bash scripts/setup-ios-app-intents.sh
       - name: Install Ad Hoc profiles
         env:
           IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}

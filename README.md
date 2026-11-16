@@ -77,12 +77,27 @@ rustup target add aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim
 brew install cocoapods
 npm run tauri ios init
 bash scripts/setup-ios-share-extension.sh
+bash scripts/setup-ios-app-intents.sh
 npm run tauri ios dev
 ```
 
-`tauri ios init` regenerates `src-tauri/gen/apple`. Run the setup script again after every init. It copies `share-extension/` into that project, reattaches the share target, and points the main target at the app group. The `fastshare` URL scheme comes from `src-tauri/Info.ios.plist`. Edit the Swift files in `share-extension/`, not under `gen/`.
+`tauri ios init` regenerates `src-tauri/gen/apple`. Run both setup scripts again after every init. `setup-ios-share-extension.sh` copies `share-extension/` into the project, reattaches the share target, and points the main target at the app group; `setup-ios-app-intents.sh` copies `app-intents/SendImagesIntent.swift` into the main application target. The `fastshare` URL scheme comes from `src-tauri/Info.ios.plist`. Edit the Swift files in `app-intents/`, not under `gen/`.
 
 On a device, pick your Apple team in Xcode. The App ID still needs the app group `group.com.alexnguyen03.fastshare` on [Apple Developer](https://developer.apple.com/account/resources). Share from Photos into Fast Share, mark the images, and send them to a computer on the same Wi-Fi that is running the desktop app.
+
+#### App Intent for Shortcuts / AssistiveTouch
+
+`app-intents/SendImagesIntent.swift` exposes a `Send Images to Fast Share` action with an `Images` parameter. It copies the supplied images into the existing Fast Share inbox, then opens the app in the editor. The computer is still selected in the editor and delivery is never implicit.
+
+The generated Apple project does not accept Swift files directly from this repository. `scripts/setup-ios-app-intents.sh` copies `app-intents/SendImagesIntent.swift` into `src-tauri/gen/apple/AppIntents/` and attaches it to the **main Fast Share app target**. In CI, the build workflow does this automatically. The AppIntent requires the same signed app and App Group as the share extension.
+
+On the iPhone, create and configure the shortcuts yourself; iOS does not let Fast Share enable system entry points silently:
+
+- Fastest screenshot: `Get Latest Screenshots` (`Limit: 1`) → `Send Images to Fast Share`.
+- From the Share Sheet: create `Fast Share Images` with only `Send Images to Fast Share`, select `Images` as the accepted type, then in Shortcut details turn on **Show in Share Sheet**.
+- AssistiveTouch / the floating button: **Settings → Accessibility → Touch → AssistiveTouch → Customize Top Level Menu → + → Shortcuts**, then pick the shortcut above.
+
+If the action is not listed, rebuild and reinstall the signed app after adding the Swift file; the app must contain the App Intent. Removing the App Group or re-signing the IPA removes its access to the Fast Share inbox.
 
 `npm run tauri ios build` produces the release archive. Without a Mac, use the device build below.
 
