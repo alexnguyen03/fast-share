@@ -91,6 +91,7 @@ function DesktopDevicesScreen({
 
   React.useEffect(() => {
     let unlisten: (() => void) | null = null;
+    let unlistenLan: (() => void) | null = null;
     void api
       .onDevicePairEvent(() => {
         void refresh();
@@ -98,8 +99,16 @@ function DesktopDevicesScreen({
       .then((stop) => {
         unlisten = stop;
       });
+    void api
+      .onLanChanged(() => {
+        void refresh();
+      })
+      .then((stop) => {
+        unlistenLan = stop;
+      });
     return () => {
       unlisten?.();
+      unlistenLan?.();
     };
   }, [refresh]);
 

@@ -31,8 +31,12 @@ pub enum HostError {
         "two devices are on different networks: this device {local} vs other {remote} (subnet mismatch / double NAT)"
     )]
     DifferentSubnet { local: String, remote: String },
-    #[error("connection blocked by Guest Wi-Fi / AP isolation or Windows Firewall")]
+    #[error("connection timed out: Guest Wi-Fi / AP isolation or Windows Firewall blocks TCP to the computer")]
     GuestWifiOrFirewall,
+    #[error(
+        "could not reach a Fast Share server at {host}:{port}: the computer app may be closed, asleep, or showing a different IP:port under the QR code"
+    )]
+    NoServer { host: String, port: u16 },
     #[error("mDNS multicast is filtered on this Wi-Fi; enter the computer IP:port shown under the QR code")]
     MulticastFiltered,
     #[error("{0}")]

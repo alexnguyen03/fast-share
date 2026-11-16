@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 
 use crate::domain::HostError;
 
+#[derive(Clone)]
 pub struct HostCert {
     pub cert_der: Vec<u8>,
     pub key_der: Vec<u8>,
