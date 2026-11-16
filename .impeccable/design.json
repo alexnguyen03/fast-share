@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-14T07:46:56.617Z",
+  "title": "Design System: Fast Share",
+  "extensions": {
+    "colorMeta": {
+      "meadow-green": {
+        "role": "primary",
+        "displayName": "Meadow Green",
+        "canonical": "#0f8a4b",
+        "tonalRamp": ["#032915", "#07401f", "#0b5f2c", "#0f8a4b", "#37a266", "#6ec08e", "#a8dcbd", "#d8f1e4"]
+      },
+      "cloud-white": {
+        "role": "neutral",
+        "displayName": "Cloud White",
+        "canonical": "#fbfdf8",
+        "tonalRamp": ["#d5dcc8", "#dfe5d2", "#e8eddb", "#eef3e5", "#f4f7ee", "#f8faf3", "#fbfdf8", "#ffffff"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#161a1d",
+        "tonalRamp": ["#0a0c0e", "#161a1d", "#262c31", "#3a4248", "#566069", "#7a848c", "#a8b0b6", "#d6dadd"]
+      },
+      "sage": {
+        "role": "neutral",
+        "displayName": "Sage",
+        "canonical": "#e7ece4",
+        "tonalRamp": ["#a7af9f", "#b9c0b1", "#cbd0c3", "#dbe0d4", "#e3e7dd", "#e7ece4", "#eff2ec", "#f7f9f5"]
+      },
+      "mist": {
+        "role": "neutral",
+        "displayName": "Mist",
+        "canonical": "#f0f3ee",
+        "tonalRamp": ["#b9beb6", "#c9cdc5", "#d8dcd4", "#e3e6df", "#e9ede7", "#f0f3ee", "#f5f7f3", "#fafbf9"]
+      },
+      "slate": {
+        "role": "neutral",
+        "displayName": "Slate",
+        "canonical": "#5c666e",
+        "tonalRamp": ["#23282d", "#343b41", "#485158", "#5c666e", "#7a858d", "#a0a9b0", "#c4cbd0", "#e4e8eb"]
+      },
+      "mint-tint": {
+        "role": "neutral",
+        "displayName": "Mint Tint",
+        "canonical": "#dff2e7",
+        "tonalRamp": ["#8fbfa6", "#a7ceb9", "#beddcc", "#d2e9dc", "#dbf0e3", "#dff2e7", "#e9f7ef", "#f5fbf7"]
+      },
+      "error-red": {
+        "role": "semantic",
+        "displayName": "Error Red",
+        "canonical": "#e23d3d",
+        "tonalRamp": ["#5b1313", "#801b1b", "#b32626", "#e23d3d", "#e96a6a", "#f09999", "#f5c2c2", "#fbe4e4"]
+      }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Page and screen titles." },
+      "title": { "displayName": "Title", "purpose": "Button and section emphasis." },
+      "body": { "displayName": "Body", "purpose": "Default text." },
+      "label": { "displayName": "Label", "purpose": "Badges and captions." }
+    },
+    "shadows": [
+      {
+        "name": "scan-vignette",
+        "value": "0 0 0 100vmax rgba(0,0,0,0.72)",
+        "purpose": "Functional occlusion behind the QR camera scan hole; not a material lift."
+      }
+    ],
+    "motion": [
+      {
+        "name": "transition-colors",
+        "value": "150ms cubic-bezier(0.4, 0, 0.2, 1)",
+        "purpose": "Default color/background transition on hover and focus."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single accent action for the screen's main call to action.",
+      "html": "<button class=\"ds-btn-primary\">Send</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:8px 16px;border:0;border-radius:10px;background:var(--primary,#0f8a4b);color:#ffffff;font:500 14px/1 system-ui,-apple-system,sans-serif;cursor:pointer;transition:opacity 150ms cubic-bezier(0.4,0,0.2,1);}.ds-btn-primary:hover{opacity:0.92;}.ds-btn-primary:focus-visible{outline:none;box-shadow:0 0 0 2px rgba(15,138,75,0.35);}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A quiet neutral action that defers to the primary.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:8px 16px;border:0;border-radius:10px;background:var(--secondary,#e7ece4);color:var(--foreground,#161a1d);font:500 14px/1 system-ui,-apple-system,sans-serif;cursor:pointer;transition:background 150ms cubic-bezier(0.4,0,0.2,1);}.ds-btn-secondary:hover{background:rgba(231,236,228,0.8);}.ds-btn-secondary:focus-visible{outline:none;box-shadow:0 0 0 2px rgba(15,138,75,0.35);}"
+    },
+    {
+      "name": "Input Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A borderless muted field that gains a tinted fill and accent ring on focus.",
+      "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Search devices\" />",
+      "css": ".ds-input{height:40px;width:100%;padding:8px 12px;border:0;border-radius:10px;background:var(--muted,#f0f3ee);color:var(--foreground,#161a1d);font:400 14px/1.43 system-ui,-apple-system,sans-serif;transition:background 150ms cubic-bezier(0.4,0,0.2,1);}.ds-input::placeholder{color:var(--muted-foreground,#5c666e);}.ds-input:focus-visible{outline:none;background:var(--secondary,#e7ece4);box-shadow:0 0 0 2px rgba(15,138,75,0.30);}"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A borderless, muted container for grouped content.",
+      "html": "<div class=\"ds-card\">Content</div>",
+      "css": ".ds-card{border-radius:14px;background:var(--muted,#f0f3ee);color:var(--card-foreground,#161a1d);padding:16px;}"
+    },
+    {
+      "name": "Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "A compact pill label for status and short metadata.",
+      "html": "<span class=\"ds-badge\">New</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:2px 8px;font:600 12px/1 system-ui,-apple-system,sans-serif;background:var(--primary,#0f8a4b);color:#ffffff;}"
+    },
+    {
+      "name": "Send Pill",
+      "kind": "custom",
+      "refersTo": "send-pill",
+      "description": "The high-emphasis, fully-rounded send control on the phone.",
+      "html": "<button class=\"ds-send-pill\">Send</button>",
+      "css": ".ds-send-pill{display:inline-flex;align-items:center;gap:8px;height:44px;padding:0 16px;border:0;border-radius:999px;background:#4c8dff;color:#ffffff;font:650 14px/1 system-ui,-apple-system,sans-serif;cursor:pointer;transition:background 150ms cubic-bezier(0.4,0,0.2,1);}.ds-send-pill:hover{background:#3b7ef2;}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Conduit",
+    "overview": "Fast Share's interface recedes so the transfer can happen. It is a quiet, tidy, single-purpose surface: neutral backgrounds, one accent, compact type, and controls that read as tools rather than decoration. The personality is \"yên tĩnh và gọn gàng\" — quiet and tidy — with nothing on screen that does not serve the job of getting an annotated image from a phone onto a computer.\n\nThe system is built on a shadcn/ui \"new-york\" foundation: semantic CSS custom properties (--background, --primary, --muted, --radius, and so on) drive six interchangeable themes, with emerald-light as the default. The desktop host and the phone UI share this one web-tech design system (React + Tailwind in a Tauri webview). The phone editor currently hard-codes its own dark palette; the confirmed direction is to fold it back into the theme tokens so every surface follows the same system.",
+    "keyCharacteristics": [
+      "Neutral, low-contrast surfaces with a single green accent.",
+      "Compact, narrow single-column layout (max 440px) on both desktop and phone.",
+      "Soft but restrained corners: 10px for cards/inputs, full pills for compact controls.",
+      "Flat tonal layering — depth comes from surface color, not shadows.",
+      "System-native typography with no display flourishes."
+    ],
+    "rules": [
+      { "name": "The Theme Tokens Rule", "body": "Components read color from CSS custom properties (var(--background), var(--primary), var(--muted)), never from a literal hex. Five additional themes — solarized-light, catppuccin-latte, solarized-dark, tokyo-night, and catppuccin-mocha — swap the same semantic slots under [data-theme=\"…\"]. A new surface must keep working across all six.", "section": "colors" },
+      { "name": "The One Accent Rule", "body": "A single accent (per theme) carries all interactive emphasis. Do not introduce a second accent color to \"add interest\"; use neutrals and the accent wash instead.", "section": "colors" },
+      { "name": "The Flat-By-Default Rule", "body": "Surfaces stay flat at rest. Do not add box-shadows to lift cards or buttons; separate layers with background/muted/sage values instead.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do read every color from theme tokens (var(--primary), var(--muted), etc.) so a surface keeps working across all six themes.",
+      "Do keep the single narrow 440px column and the 16px/12px rhythm; do not widen the desktop host into a dashboard.",
+      "Do use the full pill (999px) for compact controls and the 10px family for cards/inputs.",
+      "Do separate surfaces with tonal values (Mist/Sage/Card White), never with shadows."
+    ],
+    "donts": [
+      "Don't hard-code a hex color in a component — this is the exact drift the Theme Tokens Rule forbids.",
+      "Don't add a second accent color; the One Accent Rule keeps Meadow Green (or the active theme's primary) as the single source of emphasis.",
+      "Don't introduce box-shadows to lift surfaces; the system is flat-by-default.",
+      "Don't leave the phone editor's fixed dark palette (#0e1014 / #2a2e36 / #4c8dff) in place — the confirmed direction is to migrate those values onto theme tokens so the editor follows the same system as the rest of the app."
+    ]
+  }
+}

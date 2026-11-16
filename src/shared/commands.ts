@@ -59,6 +59,11 @@ export type PairResult = {
   status: "pending" | "trusted" | "rejected" | "needs_forget";
 };
 
+export type PhoneIdentity = {
+  deviceId: string;
+  name: string;
+};
+
 export type WindowPrefs = {
   snapToEdge: boolean;
   alwaysOnTop: boolean;
@@ -76,6 +81,7 @@ type Preview = {
   images: Record<string, string>;
   destinations: Destination[];
   paired: boolean;
+  phoneIdentity: PhoneIdentity;
 };
 
 const preview: Preview = {
@@ -106,6 +112,7 @@ const preview: Preview = {
     { pcId: "pc-home-1", name: "Home laptop", online: true },
   ],
   paired: true,
+  phoneIdentity: { deviceId: "phone-preview", name: "My iPhone" },
 };
 
 function inTauri(): boolean {
@@ -430,6 +437,21 @@ export const api = {
       return [await samplePng("One", "#e23d3d"), await samplePng("Two", "#6ea8fe")];
     }
     return invoke<string[]>("take_shared_images");
+  },
+
+  phoneIdentity(): Promise<PhoneIdentity> {
+    if (!inTauri()) {
+      return Promise.resolve({ ...preview.phoneIdentity });
+    }
+    return invoke<PhoneIdentity>("phone_identity");
+  },
+
+  setPhoneName(name: string): Promise<void> {
+    if (!inTauri()) {
+      preview.phoneIdentity.name = name.trim();
+      return Promise.resolve();
+    }
+    return invoke("set_phone_name", { name });
   },
 
   listKnownPcs(): Promise<Destination[]> {

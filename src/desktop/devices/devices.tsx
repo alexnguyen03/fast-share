@@ -9,6 +9,7 @@ import {
   type PhoneView,
 } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
+import { FirewallWarning } from "../../shared/firewall-warning";
 import { LanStatusCard } from "../../shared/lan-status";
 import {
   AlertDialog,
@@ -47,7 +48,7 @@ function DeviceAvatar({ name }: { name: string }): React.JSX.Element {
 
 function latestTimeForDevice(name: string, batches: HistoryBatch[]): string {
   const match = batches.find((b) => b.phoneName === name);
-  return match ? relativeTime(match.receivedAt) : en.justNow;
+  return match ? relativeTime(match.receivedAt) : en.noImagesYet;
 }
 
 function DesktopDevicesScreen({
@@ -88,6 +89,20 @@ function DesktopDevicesScreen({
     setLanInfo(nextLan);
   }, []);
 
+  React.useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    void api
+      .onDevicePairEvent(() => {
+        void refresh();
+      })
+      .then((stop) => {
+        unlisten = stop;
+      });
+    return () => {
+      unlisten?.();
+    };
+  }, [refresh]);
+
   const trustedPhones = phones.filter((p) => p.trust === "trusted");
   const pendingPhones = phones.filter((p) => p.trust === "pending");
   const lanOthers = nearby.filter((item) => item.name !== status.pcName);
@@ -103,7 +118,7 @@ function DesktopDevicesScreen({
         >
           <ChevronLeft className="h-5 w-5" />
         </Button>
-        <h1 className="m-0 text-center text-[1.12rem] font-semibold text-foreground">
+        <h1 className="m-0 text-center text-lg font-semibold text-foreground">
           {en.devicesTitle}
         </h1>
         <Button
@@ -121,6 +136,16 @@ function DesktopDevicesScreen({
 
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pt-1">
         <LanStatusCard info={lanInfo} />
+        {status.firewallWarning ? (
+          <FirewallWarning
+            onAllow={() => {
+              void api.allowFirewall().then(() => {
+                showToast(en.firewallAllowed);
+                return refresh();
+              });
+            }}
+          />
+        ) : null}
         <h2 className="mt-1.5 mb-0.5 text-base font-semibold text-foreground">
           {en.connected}
         </h2>
@@ -136,7 +161,7 @@ function DesktopDevicesScreen({
                 className="flex min-h-10 items-center gap-2.5 py-1"
               >
                 <DeviceAvatar name={phone.name} />
-                <span className="min-w-0 flex-1 truncate text-[0.96rem] font-medium text-foreground">
+                <span className="min-w-0 flex-1 truncate text-base font-medium text-foreground">
                   {phone.name}
                 </span>
                 <span className="shrink-0 text-sm text-muted-foreground">
@@ -158,6 +183,7 @@ function DesktopDevicesScreen({
                     <AlertDialogFooter>
                       <AlertDialogCancel>{en.cancel}</AlertDialogCancel>
                       <AlertDialogAction
+                        variant="destructive"
                         onClick={() => {
                           void api.forgetPhone(phone.id).then(() => {
                             showToast(en.forgotComputer(phone.name));
@@ -191,7 +217,7 @@ function DesktopDevicesScreen({
                   className="flex min-h-10 items-center gap-2.5 py-1"
                 >
                   <DeviceAvatar name={pending.name} />
-                  <span className="min-w-0 flex-1 truncate text-[0.96rem] font-medium text-foreground">
+                  <span className="min-w-0 flex-1 truncate text-base font-medium text-foreground">
                     {pending.name}
                   </span>
                   <div className="flex items-center gap-1.5">
@@ -225,7 +251,7 @@ function DesktopDevicesScreen({
                   className="flex min-h-10 items-center gap-2.5 py-1"
                 >
                   <DeviceAvatar name={item.name} />
-                  <span className="min-w-0 flex-1 truncate text-[0.96rem] font-medium text-foreground">
+                  <span className="min-w-0 flex-1 truncate text-base font-medium text-foreground">
                     {item.name}
                   </span>
                   <span className="shrink-0 text-sm text-muted-foreground">
@@ -242,7 +268,7 @@ function DesktopDevicesScreen({
           className="mt-1 w-full font-semibold"
           onClick={() => setShowQr((prev) => !prev)}
         >
-          {showQr ? en.hideQrPair : `${en.showQrPair} · ${status.pairCode}`}
+          {showQr ? en.hideQrPair : en.showQrPair}
         </Button>
 
         {showQr ? (
@@ -254,26 +280,15 @@ function DesktopDevicesScreen({
             />
             <p className="text-sm font-medium">{status.pcName}</p>
             <p className="mt-1 text-center text-xl font-bold tracking-[0.12em]">
-              {`${en.pairCodeLabel}: ${status.pairCode}`}
+              {status.pairCode}
+            </p>
+            <p className="text-center text-xs text-muted-foreground">
+              {en.pairCodeHint}
             </p>
             <p className="text-sm text-muted-foreground">{status.lanAddress}</p>
             <p className="text-xs text-muted-foreground">
               {`${en.lanThisDevice}: ${lanInfo.ip}  ·  ${en.lanSubnet}: ${lanInfo.subnet}`}
             </p>
-            {status.firewallWarning ? (
-              <Card className="mt-2 flex flex-col gap-2 border-0 bg-accent p-2.5">
-                <p className="text-xs">{en.firewallPublicWarning}</p>
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => {
-                    void api.allowFirewall().then(refresh);
-                  }}
-                >
-                  {en.allowFirewallButton}
-                </Button>
-              </Card>
-            ) : null}
           </Card>
         ) : null}
       </div>

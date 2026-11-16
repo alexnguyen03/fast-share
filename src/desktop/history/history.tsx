@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { api, type HistoryBatch, type HostStatus } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
+import { FirewallWarning } from "../../shared/firewall-warning";
 import { cn } from "../../shared/lib/utils";
 import { applyTheme } from "../../shared/settings";
 import {
@@ -58,7 +59,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../shared/ui/select";
-import { showToast } from "../../shared/ui/toast";
+import { showToast, dismissToast } from "../../shared/ui/toast";
 import { mountPhones } from "../devices/devices";
 import { DesktopFrame } from "../frame";
 import { mountSettings } from "../settings/settings";
@@ -92,23 +93,25 @@ async function loadPng(imageId: string): Promise<string> {
 }
 
 export function relativeTime(iso: string): string {
-  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (minutes < 1) {
+  const elapsed = (Date.now() - new Date(iso).getTime()) / 60000;
+  if (elapsed < 1) {
     return en.justNow;
   }
+  const minutes = Math.floor(elapsed);
   if (minutes < 60) {
-    return `${minutes}m ago`;
+    return en.minutesAgo(minutes);
   }
-  const hours = Math.round(minutes / 60);
+  const hours = Math.floor(elapsed / 60);
   if (hours < 24) {
     return en.hoursAgo(hours);
   }
-  return en.daysAgo(Math.round(hours / 24));
+  return en.daysAgo(Math.floor(hours / 24));
 }
 
 function flattenAndGroup(
   batches: HistoryBatch[],
   deviceFilter: string,
+  hiddenIds: string[] = [],
 ): { flat: FlatItem[]; groups: TimeGroupSection[] } {
   const raw: FlatItem[] = [];
   for (const batch of batches) {
@@ -121,6 +124,9 @@ function flattenAndGroup(
     }
     const label = relativeTime(batch.receivedAt);
     for (const img of batch.images) {
+      if (hiddenIds.includes(img.id)) {
+        continue;
+      }
       const pinned = Boolean(img.pinned);
       if (deviceFilter === "pinned" && !pinned) {
         continue;
@@ -245,6 +251,7 @@ function LightboxModal({
               type="button"
               variant="secondary"
               size="icon"
+              aria-label={en.previous}
               onClick={onPrev}
               className="absolute left-2 top-1/2 h-8 w-8 -translate-y-1/2 rounded-full opacity-85 hover:opacity-100"
             >
@@ -257,6 +264,7 @@ function LightboxModal({
               type="button"
               variant="secondary"
               size="icon"
+              aria-label={en.next}
               onClick={onNext}
               className="absolute right-2 top-1/2 h-8 w-8 -translate-y-1/2 rounded-full opacity-85 hover:opacity-100"
             >
@@ -393,6 +401,8 @@ function HistoryTile({
           role="button"
           tabIndex={0}
           draggable
+          aria-label={`${item.phoneName} · ${item.timeGroup}`}
+          aria-pressed={selected}
           title={`${item.phoneName} · ${item.timeGroup}`}
           onPointerDown={(event) => {
             if (event.button === 0 && !selectMode) {
@@ -436,8 +446,17 @@ function HistoryTile({
             onSelect();
           }}
           onDoubleClick={onPreview}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onSelect();
+            } else if (event.key === " ") {
+              event.preventDefault();
+              onPreview();
+            }
+          }}
           className={cn(
-            "group relative aspect-[1.15/1] w-full cursor-pointer overflow-hidden rounded-xl border-0 bg-muted p-0 transition-transform active:scale-[0.99]",
+            "group relative aspect-[4/5] w-full cursor-pointer overflow-hidden rounded-xl border-0 bg-muted p-0 transition-transform focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none active:scale-[0.99]",
             selected && "ring-2 ring-primary",
           )}
         >
@@ -446,7 +465,7 @@ function HistoryTile({
               src={src}
               alt={en.image}
               draggable={false}
-              className="block h-full w-full select-none object-cover"
+              className="block h-full w-full select-none object-contain"
             />
           ) : null}
 
@@ -458,7 +477,7 @@ function HistoryTile({
 
           {showDeviceName ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/65 via-black/25 to-transparent px-2.5 pt-4 pb-1.5">
-              <span className="block truncate text-[0.74rem] font-medium text-white">
+              <span className="block truncate text-xs font-medium text-white">
                 {item.phoneName}
               </span>
             </div>
@@ -469,7 +488,7 @@ function HistoryTile({
               <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground">
                 <Check className="h-5 w-5 stroke-[2.8]" />
               </div>
-              <span className="text-xs font-semibold">{en.copy}</span>
+              <span className="text-xs font-semibold">{en.copied}</span>
             </div>
           ) : null}
 
@@ -576,6 +595,101 @@ function DesktopHistoryScreen({
     }
   }, []);
 
+  const [hiddenIds, setHiddenIds] = React.useState<string[]>([]);
+  const pendingDeleteRef = React.useRef<{
+    ids: string[];
+    timer: number;
+    toastId: number;
+  } | null>(null);
+  const mountedRef = React.useRef<boolean>(true);
+
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const commitDelete = React.useCallback(
+    (ids: string[]) => {
+      for (const id of ids) {
+        imageCache.delete(id);
+      }
+      void Promise.all(ids.map((id) => api.deleteHistoryImage(id)))
+        .catch(() => {
+          // The files may already be gone; reload below resyncs the list.
+        })
+        .then(() => {
+          if (!mountedRef.current) {
+            return;
+          }
+          setHiddenIds((prev) => prev.filter((id) => !ids.includes(id)));
+          return reload();
+        });
+    },
+    [reload],
+  );
+
+  const clearPendingDelete = React.useCallback((): boolean => {
+    const pending = pendingDeleteRef.current;
+    if (!pending) {
+      return false;
+    }
+    window.clearTimeout(pending.timer);
+    if (pending.toastId) {
+      dismissToast(pending.toastId);
+    }
+    pendingDeleteRef.current = null;
+    return true;
+  }, []);
+
+  const flushPendingDelete = React.useCallback(() => {
+    const pending = pendingDeleteRef.current;
+    if (!pending) {
+      return;
+    }
+    clearPendingDelete();
+    commitDelete(pending.ids);
+  }, [clearPendingDelete, commitDelete]);
+
+  const requestDelete = React.useCallback(
+    (ids: string[]) => {
+      if (ids.length === 0) {
+        return;
+      }
+      flushPendingDelete();
+      setHiddenIds((prev) => [...prev, ...ids]);
+      setSelectedIds([]);
+      setActiveImageId((prev) => (prev && ids.includes(prev) ? null : prev));
+      const entry = { ids, timer: 0, toastId: 0 };
+      entry.timer = window.setTimeout(() => {
+        pendingDeleteRef.current = null;
+        dismissToast(entry.toastId);
+        commitDelete(ids);
+      }, 5000);
+      pendingDeleteRef.current = entry;
+      entry.toastId = showToast(
+        ids.length > 1
+          ? en.imagesDeletedToast(ids.length)
+          : en.imageDeletedToast,
+        "default",
+        {
+          label: en.undo,
+          onAction: () => {
+            if (pendingDeleteRef.current !== entry) {
+              return;
+            }
+            window.clearTimeout(entry.timer);
+            pendingDeleteRef.current = null;
+            setHiddenIds((prev) => prev.filter((id) => !ids.includes(id)));
+            showToast(en.deleteUndone);
+          },
+        },
+      );
+    },
+    [commitDelete, flushPendingDelete],
+  );
+
   React.useEffect(() => {
     let unlisten: (() => void) | null = null;
     void api.onHistoryFocus((batchId) => {
@@ -608,8 +722,8 @@ function DesktopHistoryScreen({
         : deviceFilter;
 
   const { flat: items, groups } = React.useMemo(
-    () => flattenAndGroup(batches, effectiveFilter),
-    [batches, effectiveFilter],
+    () => flattenAndGroup(batches, effectiveFilter, hiddenIds),
+    [batches, effectiveFilter, hiddenIds],
   );
 
   const currentActiveId =
@@ -646,8 +760,17 @@ function DesktopHistoryScreen({
         setSelectedIds([]);
         return;
       }
-      const targetId =
-        selectMode && selectedIds.length > 0 ? selectedIds[0] : currentActiveId;
+      const targetId = selectMode
+        ? (selectedIds[0] ?? null)
+        : currentActiveId;
+      if (event.key === "Delete") {
+        if (selectMode) {
+          requestDelete(selectedIds);
+        } else if (targetId) {
+          requestDelete([targetId]);
+        }
+        return;
+      }
       if (!targetId) {
         return;
       }
@@ -667,26 +790,6 @@ function DesktopHistoryScreen({
       if (event.key === "p" || event.key === "P") {
         handleTogglePin(targetId);
       }
-      if (event.key === "Delete") {
-        if (selectMode && selectedIds.length > 0) {
-          void Promise.all(
-            selectedIds.map((id) => {
-              imageCache.delete(id);
-              return api.deleteHistoryImage(id);
-            }),
-          ).then(() => {
-            setSelectedIds([]);
-            showToast(en.imageDeletedToast);
-            return reload();
-          });
-        } else {
-          imageCache.delete(targetId);
-          void api.deleteHistoryImage(targetId).then(() => {
-            showToast(en.imageDeletedToast);
-            return reload();
-          });
-        }
-      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -697,6 +800,7 @@ function DesktopHistoryScreen({
     reload,
     markCopied,
     handleTogglePin,
+    requestDelete,
   ]);
 
   const showDeviceName =
@@ -754,9 +858,7 @@ function DesktopHistoryScreen({
               }
             }}
           >
-            {selectedIds.length > 0
-              ? `${en.copy} (${selectedIds.length})`
-              : en.copy}
+            {selectedIds.length > 1 ? en.copyFirst : en.copy}
           </Button>
           <Button
             variant="secondary"
@@ -777,19 +879,7 @@ function DesktopHistoryScreen({
             className="flex-1"
             disabled={selectedIds.length === 0}
             onClick={() => {
-              if (selectedIds.length === 0) {
-                return;
-              }
-              void Promise.all(
-                selectedIds.map((id) => {
-                  imageCache.delete(id);
-                  return api.deleteHistoryImage(id);
-                }),
-              ).then(() => {
-                setSelectedIds([]);
-                showToast(en.imageDeletedToast);
-                return reload();
-              });
+              requestDelete(selectedIds);
             }}
           >
             {selectedIds.length > 0
@@ -817,11 +907,16 @@ function DesktopHistoryScreen({
               <AlertDialogFooter>
                 <AlertDialogCancel>{en.cancel}</AlertDialogCancel>
                 <AlertDialogAction
+                  variant="destructive"
                   onClick={() => {
+                    clearPendingDelete();
                     imageCache.clear();
+                    setHiddenIds([]);
                     setSelectedIds([]);
-                    showToast(en.imageDeletedToast);
-                    void api.deleteHistory().then(() => reload());
+                    void api.deleteHistory().then(() => {
+                      showToast(en.historyCleared);
+                      return reload();
+                    });
                   }}
                 >
                   {en.deleteAll}
@@ -832,11 +927,77 @@ function DesktopHistoryScreen({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2">
+        {status.pending.length > 0 ? (
+          <div className="flex flex-col gap-2">
+            {status.pending.map((pending) => (
+              <Card
+                key={pending.id}
+                className="flex flex-col gap-2 border-0 bg-accent p-3"
+              >
+                <p className="text-sm font-medium">
+                  {en.acceptPhone(pending.name)}
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      void api.acceptPhone(pending.id).then(() => {
+                        showToast(en.deviceConnectedToast(pending.name));
+                        return reload();
+                      });
+                    }}
+                  >
+                    {en.accept}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      void api.rejectPhone(pending.id).then(() => reload());
+                    }}
+                  >
+                    {en.reject}
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        ) : null}
+
         {groups.length === 0 ? (
-          <p className="my-12 text-center text-[0.95rem] text-muted-foreground">
-            {en.emptyHistory}
-          </p>
+          <Card className="my-auto flex flex-col items-center gap-3 rounded-2xl border-0 bg-muted px-4 py-6 text-center">
+            <div className="rounded-xl bg-background p-2 ring-1 ring-border/70">
+              <img
+                src={`data:image/png;base64,${status.qrPngBase64}`}
+                alt={en.pairPhone}
+                className="h-36 w-36"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-semibold text-foreground">
+                {status.lanAddress
+                  ? `${en.ready} · ${status.lanAddress}`
+                  : en.ready}
+              </p>
+              <p className="max-w-[34ch] text-xs text-muted-foreground">
+                {en.scanWithPhone}
+              </p>
+            </div>
+            {status.firewallWarning ? (
+              <div className="w-full text-left">
+                <FirewallWarning
+                  onAllow={() => {
+                    void api.allowFirewall().then(() => {
+                      showToast(en.firewallAllowed);
+                      return reload();
+                    });
+                  }}
+                />
+              </div>
+            ) : null}
+          </Card>
         ) : (
           <div className="flex flex-col gap-4">
             {groups.map((group) => (
@@ -908,16 +1069,7 @@ function DesktopHistoryScreen({
                           );
                         }}
                         onDelete={() => {
-                          imageCache.delete(item.imageId);
-                          setSelectedIds((prev) =>
-                            prev.filter((id) => id !== item.imageId),
-                          );
-                          void api
-                            .deleteHistoryImage(item.imageId)
-                            .then(() => {
-                              showToast(en.imageDeletedToast);
-                              return reload();
-                            });
+                          requestDelete([item.imageId]);
                         }}
                       />
                     );
@@ -927,38 +1079,6 @@ function DesktopHistoryScreen({
             ))}
           </div>
         )}
-
-        {status.pending.map((pending) => (
-          <Card
-            key={pending.id}
-            className="mt-2.5 flex flex-col gap-2 border-0 bg-accent p-3"
-          >
-            <p className="text-sm font-medium">{en.acceptPhone(pending.name)}</p>
-            <div className="flex gap-2">
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => {
-                  void api.acceptPhone(pending.id).then(() => {
-                    showToast(en.deviceConnectedToast(pending.name));
-                    return reload();
-                  });
-                }}
-              >
-                {en.accept}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  void api.rejectPhone(pending.id).then(() => reload());
-                }}
-              >
-                {en.reject}
-              </Button>
-            </div>
-          </Card>
-        ))}
       </div>
 
       <LightboxModal
@@ -1002,7 +1122,7 @@ function DesktopHistoryScreen({
           {status.pending.length > 0 ? (
             <Badge
               variant="destructive"
-              className="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 text-[0.68rem]"
+              className="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 text-xs"
             >
               {status.pending.length}
             </Badge>
