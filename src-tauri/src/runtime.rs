@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{DefaultBodyLimit, State};
@@ -8,7 +8,7 @@ use axum::{Json, Router};
 use base64::Engine;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::adapters::{lan_ipv4, FsStore, HostCert, OsClipboard, OsNotifier};
 use crate::domain::{BatchId, DeviceId, HostError, PcId, QrPayload};
@@ -65,7 +65,12 @@ pub struct HostInner {
     pub ticket: PairingTicket,
     pub pc_id: PcId,
     pub cert: HostCert,
+    /// The LAN address the TLS listener is actually bound to. It can differ
+    /// from the live `lan_ipv4()` after a network change until the watcher
+    /// rebinds, so the QR payload must follow this field, not the live one.
+    pub bind_ip: Ipv4Addr,
     pub port: u16,
+    pub server_handle: Option<axum_server::Handle>,
     pub phone: PhoneIdentity,
     pub known_pcs: Vec<KnownPc>,
     pub window_prefs: WindowPrefs,
@@ -112,14 +117,21 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
     let known_pcs = load_known_pcs(&dir).map_err(|error| error.to_string())?;
     let is_mobile = cfg!(any(target_os = "ios", target_os = "android"));
     let bind_ip = lan_ipv4();
-    let port = if is_mobile {
-        0
+    let binding = if is_mobile {
+        None
     } else {
-        bindable_port(bind_ip).ok_or_else(|| "no free LAN port".to_string())?
+        Some(bind_listener(bind_ip, None).ok_or_else(|| "no free LAN port".to_string())?)
     };
+    let port = binding.as_ref().map(|(port, _)| *port).unwrap_or(0);
     let ticket = issue_ticket(&SystemClock);
     let pc_name = settings.pc_display_name;
     let pc_id_text = pc_id.as_str().to_string();
+    let cert_fp = cert.fingerprint.clone();
+    let cert_for_server = HostCert {
+        cert_der: cert.cert_der.clone(),
+        key_der: cert.key_der.clone(),
+        fingerprint: cert.fingerprint.clone(),
+    };
     let shared = SharedHost(Arc::new(Mutex::new(HostInner {
         store,
         clipboard: OsClipboard,
@@ -131,7 +143,9 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             key_der: cert.key_der.clone(),
             fingerprint: cert.fingerprint.clone(),
         },
+        bind_ip,
         port,
+        server_handle: None,
         phone,
         known_pcs,
         window_prefs: WindowPrefs::default(),
@@ -139,18 +153,98 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
     })));
     app.manage(shared.clone());
     if !is_mobile {
-        let cert_fp = cert.fingerprint.clone();
-        spawn_server(shared.clone(), cert, bind_ip, port);
-        spawn_retention_loop(shared);
-        if let Err(error) = crate::adapters::advertise(&pc_id_text, &pc_name, port, &cert_fp) {
+        let (_, listener) = binding.ok_or_else(|| "no free LAN port".to_string())?;
+        spawn_server(shared.clone(), cert_for_server, listener);
+        spawn_retention_loop(shared.clone());
+        if let Err(error) = crate::adapters::advertise(bind_ip, &pc_id_text, &pc_name, port, &cert_fp)
+        {
             eprintln!("fast-share discovery: {error}");
         }
+        spawn_lan_watch(shared, app.clone());
     }
     Ok(())
 }
 
-fn bindable_port(bind_ip: std::net::Ipv4Addr) -> Option<u16> {
-    host_ports().find(|port| std::net::TcpListener::bind((bind_ip, *port)).is_ok())
+fn bind_listener(
+    bind_ip: Ipv4Addr,
+    preferred: Option<u16>,
+) -> Option<(u16, std::net::TcpListener)> {
+    let preferred = preferred.filter(|port| host_ports().contains(port));
+    if let Some(port) = preferred {
+        if let Ok(listener) = std::net::TcpListener::bind((bind_ip, port)) {
+            return Some((port, listener));
+        }
+    }
+    host_ports().find_map(|port| {
+        if Some(port) == preferred {
+            return None;
+        }
+        std::net::TcpListener::bind((bind_ip, port))
+            .ok()
+            .map(|listener| (port, listener))
+    })
+}
+
+/// Desktop only: follow the LAN address. When the machine moves to another
+/// network the previously bound listener becomes unreachable while the QR code
+/// and mDNS would keep advertising a live address, so rebind and republish.
+fn spawn_lan_watch(shared: SharedHost, app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        let desired = lan_ipv4();
+        if desired.is_loopback() {
+            continue;
+        }
+        let (current_ip, current_port, pc_id_text, pc_name, fingerprint) = {
+            let Ok(host) = shared.lock() else {
+                continue;
+            };
+            let name = host
+                .store
+                .load_settings()
+                .map(|settings| settings.pc_display_name)
+                .unwrap_or_else(|_| "My PC".to_string());
+            (
+                host.bind_ip,
+                host.port,
+                host.pc_id.as_str().to_string(),
+                name,
+                host.cert.fingerprint.clone(),
+            )
+        };
+        if desired == current_ip {
+            continue;
+        }
+        let Some((port, listener)) = bind_listener(desired, Some(current_port)) else {
+            eprintln!("fast-share: LAN address is {desired} but no port could be bound");
+            continue;
+        };
+        let previous_handle = {
+            let Ok(mut host) = shared.lock() else {
+                continue;
+            };
+            host.server_handle.take()
+        };
+        if let Some(handle) = previous_handle {
+            handle.graceful_shutdown(Some(std::time::Duration::from_millis(1000)));
+        }
+        let cert = {
+            let Ok(mut host) = shared.lock() else {
+                continue;
+            };
+            host.bind_ip = desired;
+            host.port = port;
+            host.cert.clone()
+        };
+        spawn_server(shared.clone(), cert, listener);
+        if let Err(error) =
+            crate::adapters::advertise(desired, &pc_id_text, &pc_name, port, &fingerprint)
+        {
+            eprintln!("fast-share discovery: {error}");
+        }
+        let _ = app.emit("lan-changed", ());
+        eprintln!("fast-share: LAN address changed, now {desired}:{port}");
+    });
 }
 
 fn spawn_retention_loop(shared: SharedHost) {
@@ -168,7 +262,11 @@ fn spawn_retention_loop(shared: SharedHost) {
     });
 }
 
-fn spawn_server(shared: SharedHost, cert: HostCert, bind_ip: std::net::Ipv4Addr, port: u16) {
+fn spawn_server(shared: SharedHost, cert: HostCert, listener: std::net::TcpListener) {
+    let handle = axum_server::Handle::new();
+    if let Ok(mut host) = shared.lock() {
+        host.server_handle = Some(handle.clone());
+    }
     std::thread::spawn(move || {
         let runtime = match tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -203,8 +301,8 @@ fn spawn_server(shared: SharedHost, cert: HostCert, bind_ip: std::net::Ipv4Addr,
                 .route("/batches", post(batches))
                 .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
                 .with_state(shared);
-            let addr = SocketAddr::from((bind_ip, port));
-            if let Err(error) = axum_server::bind_rustls(addr, config)
+            if let Err(error) = axum_server::from_tcp_rustls(listener, config)
+                .handle(handle)
                 .serve(app.into_make_service())
                 .await
             {
@@ -428,6 +526,16 @@ impl SharedHost {
 }
 
 impl HostInner {
+    /// The address the TLS listener serves. On mobile there is no listener, so
+    /// the live LAN address is the only meaningful one.
+    pub fn listener_ip(&self) -> Ipv4Addr {
+        if cfg!(any(target_os = "android", target_os = "ios")) {
+            lan_ipv4()
+        } else {
+            self.bind_ip
+        }
+    }
+
     pub fn refresh_ticket(&mut self) {
         let now = SystemClock.now();
         if self.ticket.used || self.ticket.expires_at <= now {
@@ -442,7 +550,7 @@ impl HostInner {
             v: 1,
             pc_id: self.pc_id.as_str().to_string(),
             name: settings.pc_display_name,
-            host: lan_ipv4().to_string(),
+            host: self.listener_ip().to_string(),
             port: self.port,
             token: self.ticket.token.clone(),
             fingerprint: self.cert.fingerprint.clone(),

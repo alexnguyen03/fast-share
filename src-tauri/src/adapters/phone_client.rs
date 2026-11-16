@@ -40,11 +40,48 @@ struct PairCodeBody {
     cert_der: String,
 }
 
-fn connection_error(host: &str) -> HostError {
-    if let Ok(target_ip) = host.parse::<std::net::Ipv4Addr>() {
-        return crate::adapters::reachability_error(crate::adapters::lan_ipv4(), target_ip);
+fn connection_error(host: &str, port: u16, error: &reqwest::Error) -> HostError {
+    let Ok(target_ip) = host.parse::<std::net::Ipv4Addr>() else {
+        return HostError::Unreachable;
+    };
+    classify_connect_failure(
+        crate::adapters::lan_ipv4(),
+        target_ip,
+        port,
+        error.is_timeout() || io_error_kind(error) == Some(std::io::ErrorKind::TimedOut),
+    )
+}
+
+fn io_error_kind(error: &reqwest::Error) -> Option<std::io::ErrorKind> {
+    use std::error::Error;
+
+    let mut source: Option<&(dyn Error + 'static)> = error.source();
+    while let Some(cause) = source {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            return Some(io.kind());
+        }
+        source = cause.source();
     }
-    HostError::Unreachable
+    None
+}
+
+/// A timeout means packets are dropped on the path (firewall / AP isolation).
+/// A fast refusal or reset means nothing is listening on that endpoint: the
+/// desktop app is closed, shows a different port, or is bound to another
+/// interface, so blaming the firewall would be misleading.
+fn classify_connect_failure(
+    local_ip: std::net::Ipv4Addr,
+    target_ip: std::net::Ipv4Addr,
+    port: u16,
+    timed_out: bool,
+) -> HostError {
+    if timed_out {
+        return crate::adapters::reachability_error(local_ip, target_ip);
+    }
+    HostError::NoServer {
+        host: target_ip.to_string(),
+        port,
+    }
 }
 
 pub async fn pair(
@@ -63,7 +100,7 @@ pub async fn pair(
         }))
         .send()
         .await
-        .map_err(|_| connection_error(&qr.host))?;
+        .map_err(|error| connection_error(&qr.host, qr.port, &error))?;
     let reply = read_pair(response).await?;
     Ok((qr, reply))
 }
@@ -105,12 +142,12 @@ pub async fn pair_with_code_endpoint(
         }))
         .send()
         .await
-        .map_err(|_| connection_error(host))?;
+        .map_err(|error| connection_error(host, port, &error))?;
     if !response.status().is_success() {
         return Err(if response.status().as_u16() == 410 {
             HostError::PairingExpired
         } else {
-            connection_error(host)
+            HostError::Unreachable
         });
     }
     let body: PairCodeBody = response.json().await.map_err(|_| HostError::Unreachable)?;
@@ -157,7 +194,7 @@ pub async fn pair_status(
         }))
         .send()
         .await
-        .map_err(|_| connection_error(&qr.host))?;
+        .map_err(|error| connection_error(&qr.host, qr.port, &error))?;
     read_pair(response).await
 }
 
@@ -182,7 +219,7 @@ pub async fn send_batch(
         }))
         .send()
         .await
-        .map_err(|_| connection_error(&qr.host))?;
+        .map_err(|error| connection_error(&qr.host, qr.port, &error))?;
     if response.status().is_success() {
         Ok(())
     } else if response.status().as_u16() == 403 {
@@ -487,8 +524,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pinned_client_accepts_matching_leaf_and_rejects_mismatched_peer() {
-        let (server_der, server_key, server_fp) = test_cert();
+    async fn pinned_client_accepts_matching_leaf_and_rejects_mismatched_peer() {        let (server_der, server_key, server_fp) = test_cert();
         let (other_der, _, other_fp) = test_cert();
         let port = serve_ready(server_der.clone(), server_key).await;
         let pc_id = PcId::parse("pc-office-1").unwrap();
@@ -535,5 +571,54 @@ mod tests {
             &base64::engine::general_purpose::STANDARD.encode(ca_cert.der()),
         );
         assert!(!ready(&ca_qr).await);
+    }
+}
+
+#[cfg(test)]
+mod connect_failure_tests {
+    use std::net::Ipv4Addr;
+
+    use super::classify_connect_failure;
+    use crate::domain::HostError;
+
+    #[test]
+    fn refusal_points_at_the_endpoint_instead_of_the_firewall() {
+        assert_eq!(
+            classify_connect_failure(
+                Ipv4Addr::new(192, 168, 1, 27),
+                Ipv4Addr::new(192, 168, 1, 27),
+                47654,
+                false
+            ),
+            HostError::NoServer {
+                host: "192.168.1.27".to_string(),
+                port: 47654,
+            }
+        );
+    }
+
+    #[test]
+    fn timeout_still_names_firewall_or_ap_isolation_on_the_same_subnet() {
+        assert_eq!(
+            classify_connect_failure(
+                Ipv4Addr::new(192, 168, 1, 27),
+                Ipv4Addr::new(192, 168, 1, 10),
+                47654,
+                true
+            ),
+            HostError::GuestWifiOrFirewall
+        );
+        assert_eq!(
+            classify_connect_failure(
+                Ipv4Addr::new(192, 168, 1, 27),
+                Ipv4Addr::new(10, 10, 10, 2),
+                47654,
+                true
+            ),
+            HostError::DifferentSubnet {
+                local: "192.168.1.27".to_string(),
+                remote: "10.10.10.2".to_string(),
+            }
+        );
     }
 }

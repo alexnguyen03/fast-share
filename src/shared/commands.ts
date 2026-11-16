@@ -556,4 +556,14 @@ export const api = {
       }
     });
   },
+
+  async onLanChanged(cb: () => void): Promise<() => void> {
+    if (!inTauri()) {
+      return () => undefined;
+    }
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<null>("lan-changed", () => {
+      cb();
+    });
+  },
 };
