@@ -2,9 +2,11 @@ import * as React from "react";
 import {
   ArrowRight,
   ArrowUpRight,
+  Check,
   ChevronDown,
   Crop,
   Grid,
+  Loader2,
   Type,
   Undo2,
   X,
@@ -56,6 +58,10 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   const [sending, setSending] = React.useState<boolean>(false);
   const [statusLine, setStatusLine] = React.useState<string>("");
   const [switchConfirmOpen, setSwitchConfirmOpen] = React.useState<boolean>(false);
+  const [removedDraft, setRemovedDraft] = React.useState<{
+    draft: Draft;
+    index: number;
+  } | null>(null);
   const [, forceRender] = React.useReducer((x: number) => x + 1, 0);
 
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
@@ -68,15 +74,52 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   const pendingBatchIdRef = React.useRef<string | null>(null);
 
   const currentDraft = options.drafts[selected] ?? options.drafts[0];
+  const undoRemoveTimerRef = React.useRef<number>(0);
+
+  React.useEffect(() => {
+    return () => window.clearTimeout(undoRemoveTimerRef.current);
+  }, []);
+
+  function removeDraftAt(index: number): void {
+    const draft = options.drafts[index];
+    if (!draft || sending) {
+      return;
+    }
+    options.drafts.splice(index, 1);
+    setRemovedDraft({ draft, index });
+    setSelected((prev) =>
+      Math.max(0, Math.min(prev, options.drafts.length - 1)),
+    );
+    forceRender();
+    window.clearTimeout(undoRemoveTimerRef.current);
+    undoRemoveTimerRef.current = window.setTimeout(() => {
+      setRemovedDraft(null);
+    }, 7000);
+  }
+
+  function undoRemove(): void {
+    if (!removedDraft) {
+      return;
+    }
+    window.clearTimeout(undoRemoveTimerRef.current);
+    options.drafts.splice(removedDraft.index, 0, removedDraft.draft);
+    setSelected(removedDraft.index);
+    setRemovedDraft(null);
+    forceRender();
+  }
 
   const paint = React.useCallback(() => {
     const stage = canvasRef.current;
     const box = stageBoxRef.current;
-    if (!stage || !box || !currentDraft) {
+    if (!stage || !box) {
       return;
     }
     const ctx = stage.getContext("2d");
     if (!ctx) {
+      return;
+    }
+    if (!currentDraft) {
+      ctx.clearRect(0, 0, stage.width, stage.height);
       return;
     }
     const width = box.clientWidth;
@@ -187,20 +230,23 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
 
   return (
     <section className="panel editor flex min-h-screen w-full flex-col bg-background px-3.5 text-foreground">
-      <header className="grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-2.5">
+      <header className="grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2.5">
         <Button
           variant="secondary"
           size="icon"
           aria-label={en.close}
-          onClick={options.onClose}
-          className="h-10 w-10 rounded-full"
+          onClick={() => {
+            options.onClose();
+          }}
+          className="h-11 w-11 rounded-full"
         >
           <X className="h-4 w-4" />
         </Button>
 
         <Button
           variant="secondary"
-          className="h-10 min-w-0 justify-center gap-2 rounded-full px-3.5"
+          aria-label={`${en.toComputer(options.pcName)} — ${options.online ? en.onlineStatus : en.offlineStatus}`}
+          className="h-11 min-w-0 justify-center gap-2 rounded-full px-3.5"
           onClick={() => {
             if (options.drafts.some((item) => item.marks.length > 0)) {
               setSwitchConfirmOpen(true);
@@ -216,14 +262,18 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
 
         <Button
           variant="default"
-          className="h-10 gap-1.5 rounded-full px-4 font-semibold"
+          className="h-11 gap-1.5 rounded-full px-4 font-semibold"
           disabled={sending || options.drafts.length === 0}
           onClick={() => {
             void handleSend();
           }}
         >
-          <span>{en.sendCount(options.drafts.length)}</span>
-          <ArrowRight className="h-4 w-4" />
+          <span>{sending ? en.sending : en.sendCount(options.drafts.length)}</span>
+          {sending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <ArrowRight className="h-4 w-4" />
+          )}
         </Button>
       </header>
 
@@ -256,6 +306,8 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
       >
         <canvas
           ref={canvasRef}
+          role="img"
+          aria-label={en.image}
           className="stage block h-full w-full touch-none bg-transparent"
           onPointerDown={(event) => {
             const start = point(event);
@@ -319,14 +371,34 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
           }}
         />
 
-        <div className="absolute top-2.5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-full bg-popover/95 p-1.5 shadow-md backdrop-blur-sm">
+        {options.drafts.length === 0 ? (
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center">
+            <p className="text-sm font-medium text-muted-foreground">
+              {en.noImagesLeft}
+            </p>
+            {removedDraft ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="pointer-events-auto"
+                onClick={undoRemove}
+              >
+                <Undo2 className="h-4 w-4" />
+                <span>{en.undo}</span>
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="absolute top-2.5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1 rounded-full bg-popover/95 p-1.5 ring-1 ring-border/70 backdrop-blur-sm">
           {toolButtons.map(([name, label]) => (
             <Button
               key={name}
               variant={tool === name ? "default" : "ghost"}
               size="icon"
               aria-label={label}
-              className="h-9 w-9 rounded-full"
+              aria-pressed={tool === name}
+              className="h-11 w-11 rounded-full"
               onClick={() => setTool(name)}
             >
               {toolIcons[name]}
@@ -338,7 +410,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             size="icon"
             aria-label={en.undo}
             disabled={(currentDraft?.marks.length ?? 0) === 0}
-            className="h-9 w-9 rounded-full"
+            className="h-11 w-11 rounded-full"
             onClick={() => {
               currentDraft?.marks.pop();
               forceRender();
@@ -351,15 +423,17 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
 
         <div className="absolute top-16 right-3 left-3 z-10 flex flex-col items-center gap-2">
           {tool === "arrow" || tool === "text" ? (
-            <div className="flex items-center gap-2 rounded-full bg-popover/95 px-2.5 py-1.5 shadow-md backdrop-blur-sm">
+            <div className="flex items-center gap-2 rounded-full bg-popover/95 px-2.5 py-1.5 ring-1 ring-border/70 backdrop-blur-sm">
               {markColors.map((value, index) => (
                 <Button
                   key={value}
                   variant="ghost"
+                  aria-label={colorLabels[index] ?? value}
+                  aria-pressed={color === value}
                   title={colorLabels[index] ?? value}
                   style={{ background: value }}
                   className={cn(
-                    "h-6 w-6 rounded-full p-0",
+                    "h-10 w-10 rounded-full p-0",
                     color === value && "ring-2 ring-primary ring-offset-2",
                   )}
                   onClick={() => setColor(value)}
@@ -376,7 +450,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
                 placeholder={en.textPlaceholder}
                 value={textValue}
                 onChange={(event) => setTextValue(event.target.value)}
-                className="rounded-full bg-popover/95 shadow-md"
+                className="rounded-full bg-popover/95 ring-1 ring-border/70"
               />
             </div>
           ) : null}
@@ -389,21 +463,32 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             <ThumbButton
               key={item.id}
               item={item}
+              index={index}
               selected={index === selected}
               onSelect={() => setSelected(index)}
-              onRemove={() => {
-                options.drafts.splice(index, 1);
-                setSelected((prev) =>
-                  Math.max(0, Math.min(prev, options.drafts.length - 1)),
-                );
-                forceRender();
-              }}
+              onRemove={() => removeDraftAt(index)}
             />
           ))}
         </div>
-        <p className="m-0 text-center text-xs text-muted-foreground">
-          {en.holdToRemove}
-        </p>
+        {options.drafts.length > 0 ? (
+          <p className="m-0 text-center text-xs text-muted-foreground">
+            {en.editHint}
+          </p>
+        ) : null}
+        {removedDraft ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{en.imageRemoved}</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-7 px-2.5"
+              onClick={undoRemove}
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+              <span>{en.undo}</span>
+            </Button>
+          </div>
+        ) : null}
         {statusLine ? (
           <p className="m-0 text-center text-xs font-medium text-destructive">
             {statusLine}
@@ -416,40 +501,65 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
 
 function ThumbButton({
   item,
+  index,
   selected,
   onSelect,
   onRemove,
 }: {
   item: Draft;
+  index: number;
   selected: boolean;
   onSelect: () => void;
   onRemove: () => void;
 }): React.JSX.Element {
-  const timerRef = React.useRef<number>(0);
-
   return (
-    <Button
-      variant="ghost"
-      className={cn(
-        "relative h-[70px] w-[54px] overflow-hidden rounded-lg p-0 transition-opacity",
-        selected ? "opacity-100 ring-2 ring-primary" : "opacity-50",
-      )}
-      onPointerDown={() => {
-        timerRef.current = window.setTimeout(onRemove, 500);
-      }}
-      onPointerUp={() => window.clearTimeout(timerRef.current)}
-      onPointerLeave={() => window.clearTimeout(timerRef.current)}
-      onClick={onSelect}
-    >
-      <img
-        src={`data:image/png;base64,${item.pngBase64}`}
-        alt={en.image}
-        className="h-full w-full object-cover"
-      />
-      {item.marks.length > 0 ? (
-        <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-primary" />
-      ) : null}
-    </Button>
+    <div className="relative shrink-0">
+      <Button
+        variant="ghost"
+        aria-label={`${en.image} ${index + 1}`}
+        aria-pressed={selected}
+        className={cn(
+          "h-[70px] w-[54px] overflow-hidden rounded-lg bg-muted p-0 transition-opacity",
+          selected
+            ? "opacity-100 ring-2 ring-primary"
+            : "opacity-60 hover:opacity-90",
+        )}
+        onKeyDown={(event) => {
+          if (event.key === "Delete" || event.key === "Backspace") {
+            event.preventDefault();
+            onRemove();
+          }
+        }}
+        onClick={onSelect}
+      >
+        <img
+          src={`data:image/png;base64,${item.pngBase64}`}
+          alt={en.image}
+          className="h-full w-full object-contain"
+        />
+        {item.marks.length > 0 ? (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute top-1 left-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground"
+          >
+            <Check className="h-2.5 w-2.5 stroke-[3]" />
+          </span>
+        ) : null}
+      </Button>
+      <Button
+        variant="secondary"
+        size="icon"
+        aria-label={`${en.removeImage} ${index + 1}`}
+        title={en.removeImage}
+        className="absolute top-0.5 right-0.5 h-6 w-6 rounded-full bg-foreground/85 p-0 text-background hover:bg-foreground"
+        onClick={(event) => {
+          event.stopPropagation();
+          onRemove();
+        }}
+      >
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </div>
   );
 }
 
@@ -501,14 +611,34 @@ function drawMark(
   image: HTMLImageElement,
 ): void {
   if (mark.tool === "crop") {
-    context.strokeStyle = "#10b981";
-    context.lineWidth = 2;
-    context.strokeRect(
-      view.x + mark.x * view.w,
-      view.y + mark.y * view.h,
-      mark.w * view.w,
-      mark.h * view.h,
-    );
+    const x = view.x + mark.x * view.w;
+    const y = view.y + mark.y * view.h;
+    const w = mark.w * view.w;
+    const h = mark.h * view.h;
+    const right = view.x + view.w;
+    const bottom = view.y + view.h;
+    const unit = Math.max(1, view.w / 400);
+    context.save();
+    context.fillStyle = "rgba(0, 0, 0, 0.5)";
+    if (y > view.y) {
+      context.fillRect(view.x, view.y, view.w, y - view.y);
+    }
+    if (y + h < bottom) {
+      context.fillRect(view.x, y + h, view.w, bottom - (y + h));
+    }
+    if (x > view.x) {
+      context.fillRect(view.x, y, x - view.x, h);
+    }
+    if (x + w < right) {
+      context.fillRect(x + w, y, right - (x + w), h);
+    }
+    context.restore();
+    context.strokeStyle = "rgba(0, 0, 0, 0.45)";
+    context.lineWidth = 4 * unit;
+    context.strokeRect(x, y, w, h);
+    context.strokeStyle = primaryColor();
+    context.lineWidth = 2 * unit;
+    context.strokeRect(x, y, w, h);
     return;
   }
   if (mark.tool === "arrow") {
@@ -516,13 +646,16 @@ function drawMark(
     return;
   }
   if (mark.tool === "text") {
+    const size = Math.max(14, view.w * 0.045);
+    const x = view.x + mark.x * view.w;
+    const y = view.y + mark.y * view.h;
+    context.font = `600 ${size}px sans-serif`;
+    context.lineJoin = "round";
+    context.lineWidth = Math.max(3, size * 0.16);
+    context.strokeStyle = haloColor(mark.color);
+    context.strokeText(mark.text, x, y);
     context.fillStyle = mark.color;
-    context.font = `${Math.max(14, view.w * 0.045)}px sans-serif`;
-    context.fillText(
-      mark.text,
-      view.x + mark.x * view.w,
-      view.y + mark.y * view.h,
-    );
+    context.fillText(mark.text, x, y);
     return;
   }
   const sx = mark.x * image.naturalWidth;
@@ -564,26 +697,60 @@ function drawArrow(
   const y1 = view.y + mark.y1 * view.h;
   const x2 = view.x + mark.x2 * view.w;
   const y2 = view.y + mark.y2 * view.h;
+  const halo = haloColor(mark.color);
+  const unit = Math.max(1, view.w / 400);
+  context.lineCap = "round";
+  context.lineJoin = "round";
+
+  const strokeLine = (): void => {
+    context.beginPath();
+    context.moveTo(x1, y1);
+    context.lineTo(x2, y2);
+    context.stroke();
+  };
+
+  context.strokeStyle = halo;
+  context.lineWidth = 7 * unit;
+  strokeLine();
   context.strokeStyle = mark.color;
-  context.fillStyle = mark.color;
-  context.lineWidth = 3;
-  context.beginPath();
-  context.moveTo(x1, y1);
-  context.lineTo(x2, y2);
-  context.stroke();
+  context.lineWidth = 3 * unit;
+  strokeLine();
+
   const angle = Math.atan2(y2 - y1, x2 - x1);
+  const head = 12 * unit;
   context.beginPath();
   context.moveTo(x2, y2);
   context.lineTo(
-    x2 - 12 * Math.cos(angle - 0.4),
-    y2 - 12 * Math.sin(angle - 0.4),
+    x2 - head * Math.cos(angle - 0.4),
+    y2 - head * Math.sin(angle - 0.4),
   );
   context.lineTo(
-    x2 - 12 * Math.cos(angle + 0.4),
-    y2 - 12 * Math.sin(angle + 0.4),
+    x2 - head * Math.cos(angle + 0.4),
+    y2 - head * Math.sin(angle + 0.4),
   );
   context.closePath();
+  context.strokeStyle = halo;
+  context.lineWidth = 4 * unit;
+  context.stroke();
+  context.fillStyle = mark.color;
   context.fill();
+}
+
+function primaryColor(): string {
+  if (typeof document === "undefined") {
+    return "#0f8a4b";
+  }
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue("--primary")
+    .trim();
+  return value || "#0f8a4b";
+}
+
+function haloColor(color: string): string {
+  const value = color.toLowerCase();
+  return value === "#ffffff" || value === "#fff" || value === "white"
+    ? "rgba(10, 14, 12, 0.55)"
+    : "rgba(255, 255, 255, 0.92)";
 }
 
 async function exportDraft(item: Draft): Promise<string> {

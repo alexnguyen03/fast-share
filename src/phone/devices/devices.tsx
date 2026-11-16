@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronLeft, Laptop, QrCode, RefreshCw } from "lucide-react";
+import { ChevronLeft, Laptop, Loader2, QrCode, RefreshCw } from "lucide-react";
 import {
   api,
   type Destination,
@@ -25,7 +25,7 @@ import { Button } from "../../shared/ui/button";
 import { Card } from "../../shared/ui/card";
 import { Input } from "../../shared/ui/input";
 import { getOrCreateRoot } from "../../shared/ui/render";
-import { showToast } from "../../shared/ui/toast";
+import { showToast, Toaster } from "../../shared/ui/toast";
 import { PhoneFrame, type PhoneTab } from "../frame";
 import { errorText, latestNote, note } from "../log";
 
@@ -57,17 +57,24 @@ export async function filesToBase64(files: File[]): Promise<string[]> {
   return encoded.filter((item) => item.length > 0);
 }
 
+type PairControl = {
+  onWaiting?: (waiting: boolean) => void;
+  shouldStop?: () => boolean;
+};
+
 async function finishPair(
   action: () => Promise<PairResult>,
   refresh: () => Promise<void>,
+  control: PairControl = {},
 ): Promise<boolean> {
+  const { onWaiting, shouldStop } = control;
   let result: PairResult;
   try {
     result = await action();
   } catch (error) {
     const msg = errorText(error);
     note(msg);
-    showToast(msg);
+    showToast(msg, "destructive");
     await refresh();
     return false;
   }
@@ -96,43 +103,60 @@ async function finishPair(
   await refresh();
   if (!pc) {
     note(en.pairFailed);
-    showToast(en.pairFailed);
+    showToast(en.pairFailed, "destructive");
     await refresh();
     return false;
   }
-  for (let attempt = 1; attempt <= 30; attempt += 1) {
-    await wait(1000);
-    try {
-      const next = await api.pollPair(pc.pcId);
-      if (next.status === "trusted") {
-        const msg = en.pairedWith(pc.name);
-        note(msg);
-        showToast(msg);
-        await refresh();
-        return true;
-      }
-      if (next.status === "rejected") {
-        note(en.rejected);
-        showToast(en.rejected);
+  onWaiting?.(true);
+  try {
+    for (let attempt = 1; attempt <= 30; attempt += 1) {
+      if (shouldStop?.()) {
+        note(en.pairingCancelled);
+        showToast(en.pairingCancelled);
         await refresh();
         return false;
       }
-    } catch (error) {
-      const msg = errorText(error);
-      note(msg);
-      showToast(msg);
-      await refresh();
-      return false;
+      await wait(1000);
+      if (shouldStop?.()) {
+        note(en.pairingCancelled);
+        showToast(en.pairingCancelled);
+        await refresh();
+        return false;
+      }
+      try {
+        const next = await api.pollPair(pc.pcId);
+        if (next.status === "trusted") {
+          const msg = en.pairedWith(pc.name);
+          note(msg);
+          showToast(msg);
+          await refresh();
+          return true;
+        }
+        if (next.status === "rejected") {
+          note(en.rejected);
+          showToast(en.rejected);
+          await refresh();
+          return false;
+        }
+      } catch (error) {
+        const msg = errorText(error);
+        note(msg);
+        showToast(msg, "destructive");
+        await refresh();
+        return false;
+      }
+      if (attempt % 5 === 0) {
+        note(en.waiting);
+        await refresh();
+      }
     }
-    if (attempt % 5 === 0) {
-      note(en.waiting);
-      await refresh();
-    }
+    note(en.timedOut);
+    showToast(en.timedOut, "destructive");
+    await refresh();
+    return false;
+  } finally {
+    onWaiting?.(false);
   }
-  note(en.timedOut);
-  showToast(en.timedOut);
-  await refresh();
-  return false;
 }
 
 export function PhoneDevicesScreen({
@@ -151,7 +175,21 @@ export function PhoneDevicesScreen({
   const [codeValue, setCodeValue] = React.useState<string>("");
   const [addressValue, setAddressValue] = React.useState<string>("");
   const [noticeText, setNoticeText] = React.useState<string>(latestNote());
+  const [showOtherPairing, setShowOtherPairing] = React.useState<boolean>(false);
+  const [pairing, setPairing] = React.useState<boolean>(false);
   const cancelScanRef = React.useRef<(() => Promise<void>) | null>(null);
+  const stopPairingRef = React.useRef<boolean>(false);
+  const pairControl = React.useMemo<PairControl>(
+    () => ({
+      onWaiting: setPairing,
+      shouldStop: () => stopPairingRef.current,
+    }),
+    [],
+  );
+  const beginPairing = React.useCallback(() => {
+    stopPairingRef.current = false;
+    setPairing(false);
+  }, []);
 
   const syncHome = React.useCallback(async () => {
     setScanning(false);
@@ -209,7 +247,7 @@ export function PhoneDevicesScreen({
       }
       if (permission !== "granted") {
         note(en.cameraDenied);
-        showToast(en.cameraDenied);
+        showToast(en.cameraDenied, "destructive");
         return;
       }
       note(en.scanning);
@@ -237,9 +275,11 @@ export function PhoneDevicesScreen({
           : en.qrRead,
       );
       await syncHome();
+      beginPairing();
       const paired = await finishPair(
         () => api.pairWithQr(scanned.content),
         syncHome,
+        pairControl,
       );
       if (paired && onPaired) {
         leave = true;
@@ -272,9 +312,11 @@ export function PhoneDevicesScreen({
     const from = lanInfo ? lanSummary(lanInfo) : en.lanThisDevice;
     note(en.contactingComputer(from, addressValue.trim() || "mDNS"));
     await syncHome();
+    beginPairing();
     const paired = await finishPair(
       () => api.pairWithCode(codeValue, addressValue),
       syncHome,
+      pairControl,
     );
     if (paired && onPaired) {
       onPaired();
@@ -301,6 +343,7 @@ export function PhoneDevicesScreen({
             {en.cancel}
           </Button>
         </div>
+        <Toaster />
       </section>
     );
   }
@@ -316,7 +359,7 @@ export function PhoneDevicesScreen({
         >
           <ChevronLeft className="h-5 w-5" />
         </Button>
-        <h1 className="m-0 text-center text-[1.12rem] font-semibold text-foreground">
+        <h1 className="m-0 text-center text-lg font-semibold text-foreground">
           {en.devicesTitle}
         </h1>
         <Button
@@ -333,13 +376,31 @@ export function PhoneDevicesScreen({
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pt-1">
+        {pairing ? (
+          <Card className="flex flex-col gap-2 border-0 bg-accent p-3">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+              <p className="text-sm font-semibold text-foreground">
+                {en.waiting}
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground">{en.waitAcceptHint}</p>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                stopPairingRef.current = true;
+              }}
+            >
+              {en.cancel}
+            </Button>
+          </Card>
+        ) : null}
         {noticeText ? (
           <p className="px-1 text-xs font-medium text-muted-foreground">
             {noticeText}
           </p>
         ) : null}
-        {lanInfo ? <LanStatusCard info={lanInfo} /> : null}
-
         <h2 className="mt-1 mb-0.5 text-sm font-semibold text-foreground">
           {en.connected}
         </h2>
@@ -355,7 +416,7 @@ export function PhoneDevicesScreen({
                 className="flex min-h-10 items-center gap-2.5 py-1"
               >
                 <Laptop className="h-5 w-5 shrink-0 text-primary" />
-                <span className="min-w-0 flex-1 truncate text-[0.95rem] font-medium text-foreground">
+                <span className="min-w-0 flex-1 truncate text-base font-medium text-foreground">
                   {pc.name}
                 </span>
                 <AlertDialog>
@@ -374,6 +435,7 @@ export function PhoneDevicesScreen({
                     <AlertDialogFooter>
                       <AlertDialogCancel>{en.cancel}</AlertDialogCancel>
                       <AlertDialogAction
+                        variant="destructive"
                         onClick={() => {
                           void api.forgetPc(pc.pcId).then(async () => {
                             const msg = en.forgotComputer(pc.name);
@@ -410,10 +472,16 @@ export function PhoneDevicesScreen({
                 onClick={() => {
                   setAddressValue(`${item.host}:${item.port}`);
                 }}
-                className="flex min-h-10 cursor-pointer items-center gap-2.5 rounded-lg px-1 py-1 transition-colors hover:bg-secondary/60"
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setAddressValue(`${item.host}:${item.port}`);
+                  }
+                }}
+                className="flex min-h-10 cursor-pointer items-center gap-2.5 rounded-lg px-1 py-1 transition-colors hover:bg-secondary/60 focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
               >
                 <Laptop className="h-5 w-5 shrink-0 text-foreground" />
-                <span className="min-w-0 flex-1 truncate text-[0.95rem] font-medium text-foreground">
+                <span className="min-w-0 flex-1 truncate text-base font-medium text-foreground">
                   {item.name}
                 </span>
                 <span className="shrink-0 text-xs text-muted-foreground">
@@ -440,42 +508,56 @@ export function PhoneDevicesScreen({
             <span>{en.scanQr}</span>
           </Button>
 
-          <form
-            onSubmit={(e) => void submitCode(e)}
-            className="flex flex-col gap-2"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full"
+            onClick={() => setShowOtherPairing((prev) => !prev)}
           >
-            <div className="flex items-center gap-2">
+            {showOtherPairing ? en.hideOtherWaysToPair : en.otherWaysToPair}
+          </Button>
+
+          {showOtherPairing ? (
+            <form
+              onSubmit={(e) => void submitCode(e)}
+              className="flex flex-col gap-2"
+            >
+              <div className="flex items-center gap-2">
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  placeholder={en.pairCodePlaceholder}
+                  aria-label={en.pairCodeLabel}
+                  value={codeValue}
+                  onChange={(event) =>
+                    setCodeValue(
+                      event.target.value.replace(/\D+/g, "").slice(0, 6),
+                    )
+                  }
+                  className="text-center font-semibold tracking-[0.14em]"
+                />
+                <Button
+                  type="submit"
+                  variant="secondary"
+                  className="shrink-0"
+                  disabled={codeValue.length !== 6}
+                >
+                  {en.pairWithCodeButton}
+                </Button>
+              </div>
               <Input
                 type="text"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder={en.pairCodePlaceholder}
-                value={codeValue}
-                onChange={(event) =>
-                  setCodeValue(
-                    event.target.value.replace(/\D+/g, "").slice(0, 6),
-                  )
-                }
-                className="text-center font-semibold tracking-[0.14em]"
+                placeholder={en.lanAddressPlaceholder}
+                aria-label={en.lanAddressLabel}
+                value={addressValue}
+                onChange={(event) => setAddressValue(event.target.value)}
               />
-              <Button
-                type="submit"
-                variant="secondary"
-                className="shrink-0"
-                disabled={codeValue.length !== 6}
-              >
-                {en.pairWithCodeButton}
-              </Button>
-            </div>
-            <Input
-              type="text"
-              placeholder={en.lanAddressPlaceholder}
-              aria-label={en.lanAddressLabel}
-              value={addressValue}
-              onChange={(event) => setAddressValue(event.target.value)}
-            />
-          </form>
+            </form>
+          ) : null}
         </Card>
+
+        {lanInfo ? <LanStatusCard info={lanInfo} /> : null}
       </div>
     </PhoneFrame>
   );

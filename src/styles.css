@@ -21,6 +21,8 @@
   --border: #cfd6cc;
   --input: #b8c2c9;
   --ring: #0f8a4b;
+  --success: #3dd68c;
+  --info: #6ea8fe;
   --radius: 0.625rem;
   font-family: system-ui, -apple-system, sans-serif;
 }
@@ -155,6 +157,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-info: var(--info);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -216,156 +220,20 @@
     padding-bottom: max(28px, calc(16px + env(safe-area-inset-bottom, 0px)));
   }
 
-  .bar,
-  .row,
-  .foot,
-  .line {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .bar {
-    justify-content: space-between;
-  }
-
-  .foot {
-    margin-top: auto;
-    justify-content: space-between;
-  }
-
   h1,
   p {
     margin: 0;
-  }
-
-  h1 {
-    font-size: 1.05rem;
-    font-weight: 650;
-  }
-
-  .stage {
-    width: 100%;
-    height: 360px;
-    background: #0b0d12;
-    border-radius: 12px;
-  }
-
-  .thumbs,
-  .tools,
-  .colors {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-  }
-
-  .colors,
-  .text-row,
-  .file,
-  video {
-    display: none;
-  }
-
-  .colors.show,
-  .text-row.show,
-  .file.show,
-  video.show {
-    display: flex;
-  }
-
-  .text-row,
-  .file {
-    width: 100%;
-  }
-
-  .thumb {
-    padding: 0;
-    border-radius: 8px;
-    position: relative;
-  }
-
-  .thumb img,
-  .hero,
-  .qr img {
-    display: block;
-    object-fit: cover;
-  }
-
-  .thumb img {
-    width: 64px;
-    height: 64px;
-  }
-
-  .thumb.marked::after {
-    content: "";
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #6ea8fe;
-  }
-
-  .pc {
-    display: flex;
-    align-items: center;
-    gap: 6px;
   }
 
   .dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #667;
+    background: var(--muted-foreground);
   }
 
   .dot.on {
-    background: #3dd68c;
-  }
-
-  .status {
-    display: none;
-    color: #c9d2e3;
-  }
-
-  .status.show,
-  .editor .status:not(:empty) {
-    display: block;
-  }
-
-  .form,
-  .list,
-  .latest {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .line {
-    justify-content: space-between;
-    text-align: left;
-  }
-
-  .swatch {
-    width: 28px;
-    height: 28px;
-    padding: 0;
-  }
-
-  .notice {
-    margin: 0;
-    min-height: 1.25em;
-    color: #d5dbe8;
-  }
-
-  .phone-log {
-    margin: 8px 0 0;
-    max-height: 9rem;
-    overflow: auto;
-    white-space: pre-wrap;
-    color: #8b93a3;
-    font: 12px/1.45 ui-monospace, monospace;
+    background: var(--success);
   }
 
   html.phone.camera-open,
@@ -380,7 +248,7 @@
     height: min(68vw, 260px);
     margin: 28px auto;
     border: 2px solid var(--primary);
-    border-radius: 18px;
+    border-radius: 14px;
     background: transparent;
     box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.72);
   }
@@ -390,99 +258,12 @@
     z-index: 1;
   }
 
-  .phone .line {
-    border: 0;
-    border-radius: 999px;
-    background: #2a2e36;
-    min-height: 48px;
-    padding: 0 16px;
-  }
-
   .editor {
-    max-width: none;
+    max-width: 440px;
+    margin: 0 auto;
     gap: 0;
     padding: 56px 14px 28px;
-    background: #0e1014;
-  }
-
-  .editor-top {
-    display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .editor svg {
-    width: 20px;
-    height: 20px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.8;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-
-  .editor svg circle {
-    fill: currentColor;
-    stroke: none;
-  }
-
-  .icon-btn,
-  .dest-pill,
-  .send-pill,
-  .tool-dock button {
-    border: 0;
-    background: #2a2e36;
-    color: #f2f4f8;
-  }
-
-  .icon-btn {
-    width: 44px;
-    height: 44px;
-    padding: 0;
-    border-radius: 999px;
-    display: grid;
-    place-items: center;
-  }
-
-  .dest-pill {
-    height: 44px;
-    min-width: 0;
-    border-radius: 999px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 0 14px;
-  }
-
-  .dest-pill span:last-of-type {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .dest-pill svg {
-    width: 16px;
-    height: 16px;
-    flex: none;
-  }
-
-  .send-pill {
-    height: 44px;
-    border-radius: 999px;
-    background: #4c8dff;
-    color: #fff;
-    font-weight: 650;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 0 16px;
-  }
-
-  .send-pill svg {
-    width: 16px;
-    height: 16px;
+    background: var(--background);
   }
 
   .editor-stage {
@@ -500,108 +281,5 @@
     background: transparent;
     border-radius: 0;
     touch-action: none;
-  }
-
-  .tool-dock {
-    position: absolute;
-    top: 8px;
-    left: 50%;
-    z-index: 2;
-    transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    padding: 6px;
-    border-radius: 999px;
-    background: #2a2e36;
-  }
-
-  .tool-dock button {
-    width: 40px;
-    height: 40px;
-    padding: 0;
-    border-radius: 999px;
-    background: transparent;
-    display: grid;
-    place-items: center;
-  }
-
-  .tool-dock button.active {
-    background: #4c8dff;
-    outline: none;
-  }
-
-  .tool-dock .split {
-    width: 1px;
-    height: 22px;
-    margin: 0 4px;
-    background: #4a5160;
-  }
-
-  .editor-extra {
-    position: absolute;
-    top: 62px;
-    left: 12px;
-    right: 12px;
-    z-index: 2;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .editor .colors.show {
-    width: auto;
-    padding: 6px;
-    border-radius: 999px;
-    background: #2a2e36;
-  }
-
-  .editor .text-row input {
-    border: 0;
-    border-radius: 999px;
-    background: #2a2e36;
-    color: #f2f4f8;
-    padding: 10px 14px;
-  }
-
-  .editor-foot {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .editor .thumbs {
-    width: 100%;
-    justify-content: center;
-  }
-
-  .editor .thumb {
-    padding: 0;
-    border: 2px solid transparent;
-    border-radius: 10px;
-    background: transparent;
-    outline: none;
-    opacity: 0.45;
-  }
-
-  .editor .thumb.selected {
-    border-color: #e7ebf3;
-    opacity: 1;
-    outline: none;
-  }
-
-  .editor .thumb img {
-    width: 54px;
-    height: 70px;
-    border-radius: 8px;
-  }
-
-  .hold {
-    margin: 0;
-    color: #9aa3b2;
-    font-size: 0.84rem;
-    text-align: center;
   }
 }

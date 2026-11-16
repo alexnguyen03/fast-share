@@ -1,8 +1,24 @@
 import * as React from "react";
-import { ArrowUpFromLine, CheckCircle2, Laptop } from "lucide-react";
+import {
+  ArrowUpFromLine,
+  CheckCircle2,
+  ChevronLeft,
+  Laptop,
+  X,
+} from "lucide-react";
 import { api, type Destination } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
 import { applyTheme } from "../../shared/settings";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../shared/ui/alert-dialog";
 import { Button } from "../../shared/ui/button";
 import { Card } from "../../shared/ui/card";
 import { Input } from "../../shared/ui/input";
@@ -24,6 +40,17 @@ import { mountPhoneSettings } from "../settings/settings";
 let inboxBound = false;
 let takingInbox = false;
 let selectedPcIdState: string | null = null;
+
+/**
+ * Drafts that were started but interrupted (destination picked, editor closed,
+ * tab switched). Keeping them here means the images taken from the share inbox
+ * are never lost until the user sends or explicitly discards them.
+ */
+let pendingDrafts: Draft[] | null = null;
+
+function keepDrafts(drafts: Draft[]): void {
+  pendingDrafts = drafts.length > 0 ? drafts : null;
+}
 
 export async function mountPhone(
   root: HTMLElement,
@@ -61,11 +88,17 @@ function navigateTab(root: HTMLElement, tab: PhoneTab): void {
 
 function PhoneSendScreen({
   initialKnown,
+  pending,
   onPickImages,
+  onResumeDrafts,
+  onDiscardDrafts,
   onSelectTab,
 }: {
   initialKnown: Destination[];
+  pending: Draft[] | null;
   onPickImages: (imagesBase64: string[], targetPcId?: string) => void;
+  onResumeDrafts: () => void;
+  onDiscardDrafts: () => void;
   onSelectTab: (tab: PhoneTab) => void;
 }): React.JSX.Element {
   const [known, setKnown] = React.useState<Destination[]>(initialKnown);
@@ -74,6 +107,7 @@ function PhoneSendScreen({
       ? selectedPcIdState
       : (initialKnown[0]?.pcId ?? ""),
   );
+  const [discardOpen, setDiscardOpen] = React.useState<boolean>(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => {
@@ -97,7 +131,7 @@ function PhoneSendScreen({
   return (
     <PhoneFrame activeTab="send" onSelectTab={onSelectTab}>
       <header className="flex min-h-9 items-center justify-between gap-2.5">
-        <h1 className="m-0 text-[1.12rem] font-semibold text-foreground">
+        <h1 className="m-0 text-lg font-semibold text-foreground">
           {en.appName}
         </h1>
         {known.length > 0 ? (
@@ -123,6 +157,40 @@ function PhoneSendScreen({
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 pt-1">
+        {pending && pending.length > 0 ? (
+          <Card className="flex items-center gap-2.5 rounded-2xl border-0 bg-accent px-3 py-2.5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+              <ArrowUpFromLine className="h-4 w-4" />
+            </div>
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm font-semibold text-foreground">
+                {en.draftsWaiting(pending.length)}
+              </span>
+              <span className="truncate text-xs text-muted-foreground">
+                {en.draftsWaitingHint}
+              </span>
+            </div>
+            <Button
+              variant="default"
+              size="sm"
+              className="shrink-0"
+              onClick={onResumeDrafts}
+            >
+              {en.continueSend}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={en.discard}
+              title={en.discard}
+              className="h-8 w-8 shrink-0 rounded-full"
+              onClick={() => setDiscardOpen(true)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          </Card>
+        ) : null}
+
         {known.length > 0 ? (
           <>
             <Input
@@ -148,7 +216,13 @@ function PhoneSendScreen({
               role="button"
               tabIndex={0}
               onClick={() => fileInputRef.current?.click()}
-              className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-0 bg-accent px-5 py-9 text-center transition-transform active:scale-[0.99]"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+              className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-0 bg-accent px-5 py-9 text-center transition-transform focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none active:scale-[0.99]"
             >
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground">
                 <ArrowUpFromLine className="h-6 w-6" />
@@ -205,6 +279,28 @@ function PhoneSendScreen({
           </Card>
         )}
       </div>
+
+      <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{en.discardDraftsTitle}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pending ? en.discardDraftsDescription(pending.length) : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{en.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                onDiscardDrafts();
+              }}
+            >
+              {en.discard}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </PhoneFrame>
   );
 }
@@ -239,8 +335,21 @@ async function consumeInbox(
     reactRoot.render(
       <PhoneSendScreen
         initialKnown={known}
+        pending={pendingDrafts}
         onPickImages={(pickedBase64, targetPcId) => {
           void openDrafts(root, pickedBase64, targetPcId);
+        }}
+        onResumeDrafts={() => {
+          const drafts = pendingDrafts;
+          if (!drafts || drafts.length === 0) {
+            return;
+          }
+          keepDrafts([]);
+          void chooseDestination(root, drafts);
+        }}
+        onDiscardDrafts={() => {
+          keepDrafts([]);
+          void mountPhone(root, "send");
         }}
         onSelectTab={(nextTab) => navigateTab(root, nextTab)}
       />,
@@ -255,11 +364,17 @@ export async function openDrafts(
   imagesBase64: string[],
   preferredPcId?: string,
 ): Promise<void> {
-  const drafts: Draft[] = imagesBase64.map((pngBase64, index) => ({
-    id: `draft-${index}`,
-    pngBase64,
-    marks: [],
-  }));
+  const existing = pendingDrafts ?? [];
+  keepDrafts([]);
+  const stamp = Date.now();
+  const drafts: Draft[] = [
+    ...existing,
+    ...imagesBase64.map((pngBase64, index) => ({
+      id: `draft-${stamp}-${index}`,
+      pngBase64,
+      marks: [],
+    })),
+  ];
   await chooseDestination(root, drafts, preferredPcId);
 }
 
@@ -311,13 +426,27 @@ function showSheet(
   all: Destination[],
 ): void {
   const reactRoot = getOrCreateRoot(root);
+  const leaveWithDrafts = (tab: PhoneTab): void => {
+    keepDrafts(drafts);
+    navigateTab(root, tab);
+  };
   reactRoot.render(
-    <PhoneFrame
-      activeTab="send"
-      onSelectTab={(tab) => navigateTab(root, tab)}
-    >
-      <header className="flex min-h-9 items-center justify-between">
-        <h1 className="m-0 text-[1.12rem] font-semibold text-foreground">
+    <PhoneFrame activeTab="send" onSelectTab={leaveWithDrafts}>
+      <header className="flex min-h-9 items-center gap-1.5">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={en.back}
+          title={en.back}
+          className="h-11 w-11 shrink-0 rounded-full"
+          onClick={() => {
+            keepDrafts(drafts);
+            void mountPhone(root, "send");
+          }}
+        >
+          <ChevronLeft className="h-5 w-5" />
+        </Button>
+        <h1 className="m-0 text-lg font-semibold text-foreground">
           {en.sendTo}
         </h1>
       </header>
@@ -334,17 +463,21 @@ function showSheet(
           </Button>
         ))}
       </Card>
+      <p className="mt-auto text-center text-xs text-muted-foreground">
+        {en.draftsWaiting(drafts.length)}
+      </p>
     </PhoneFrame>,
   );
 }
 
 function showOffline(root: HTMLElement, drafts: Draft[]): void {
   const reactRoot = getOrCreateRoot(root);
+  const leaveWithDrafts = (tab: PhoneTab): void => {
+    keepDrafts(drafts);
+    navigateTab(root, tab);
+  };
   reactRoot.render(
-    <PhoneFrame
-      activeTab="send"
-      onSelectTab={(tab) => navigateTab(root, tab)}
-    >
+    <PhoneFrame activeTab="send" onSelectTab={leaveWithDrafts}>
       <Card className="my-auto flex flex-col items-center gap-3 border-0 bg-muted p-5 text-center">
         <p className="text-sm font-medium text-foreground">{en.offline}</p>
         <div className="flex w-full gap-2">
@@ -361,6 +494,7 @@ function showOffline(root: HTMLElement, drafts: Draft[]): void {
             variant="default"
             className="flex-1"
             onClick={() => {
+              keepDrafts(drafts);
               void mountDevices(
                 root,
                 () => {
@@ -373,6 +507,16 @@ function showOffline(root: HTMLElement, drafts: Draft[]): void {
             {en.scanQr}
           </Button>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            keepDrafts(drafts);
+            void mountPhone(root, "send");
+          }}
+        >
+          {en.cancel}
+        </Button>
       </Card>
     </PhoneFrame>,
   );
@@ -384,11 +528,13 @@ function openEditor(
   pc: Destination,
   all: Destination[],
 ): void {
+  keepDrafts(drafts);
   mountEditor(root, {
     pcName: pc.name,
     online: pc.online,
     drafts,
     onClose: () => {
+      keepDrafts(drafts);
       void mountPhone(root, "send");
     },
     onSwitch: () =>
@@ -401,6 +547,7 @@ function openEditor(
     onSend: async (batchId, images) => {
       try {
         await api.sendBatch(pc.pcId, batchId, images);
+        keepDrafts([]);
         const sentMsg =
           images.length === 1
             ? `${en.sentTo(pc.name)} · ${en.pasteReady}`
@@ -428,7 +575,7 @@ function openEditor(
                   void mountPhone(root, "send");
                 }}
               >
-                {en.back}
+                {en.sendAnother}
               </Button>
             </Card>
           </PhoneFrame>,

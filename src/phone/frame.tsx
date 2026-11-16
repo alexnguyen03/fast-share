@@ -3,6 +3,7 @@ import { Laptop, Send, Settings as SettingsIcon } from "lucide-react";
 import { en } from "../shared/locales/en";
 import { cn } from "../shared/lib/utils";
 import { Button } from "../shared/ui/button";
+import { Toaster } from "../shared/ui/toast";
 
 export type PhoneTab = "send" | "devices" | "settings";
 
@@ -68,6 +69,7 @@ export function PhoneFrame({
           <span>{en.settings}</span>
         </Button>
       </footer>
+      <Toaster />
     </section>
   );
 }

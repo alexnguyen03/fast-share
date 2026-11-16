@@ -11,20 +11,51 @@ import {
 } from "../../shared/settings";
 import { Button } from "../../shared/ui/button";
 import { Card } from "../../shared/ui/card";
+import { Input } from "../../shared/ui/input";
+import { Label } from "../../shared/ui/label";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import { showToast } from "../../shared/ui/toast";
 import { PhoneFrame, type PhoneTab } from "../frame";
 
 export function PhoneSettingsScreen({
   initialSettings,
+  initialPhoneName,
   onSelectTab,
 }: {
   initialSettings: Settings;
+  initialPhoneName: string;
   onSelectTab: (tab: PhoneTab) => void;
 }): React.JSX.Element {
   const [theme, setTheme] = React.useState<AppTheme>(
     initialSettings.theme ?? "emerald-light",
   );
+  const [phoneName, setPhoneName] = React.useState(initialPhoneName);
+  const debounceRef = React.useRef<number>(0);
+
+  const scheduleNameSave = React.useCallback((nextName: string) => {
+    window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => {
+      const trimmed = nextName.trim();
+      if (!trimmed) {
+        return;
+      }
+      void api
+        .setPhoneName(trimmed)
+        .then(() => {
+          showToast(en.settingsSaved);
+        })
+        .catch((error: unknown) => {
+          showToast(
+            error instanceof Error ? error.message : en.settings,
+            "destructive",
+          );
+        });
+    }, 450);
+  }, []);
+
+  React.useEffect(() => {
+    return () => window.clearTimeout(debounceRef.current);
+  }, []);
 
   function selectTheme(nextTheme: AppTheme): void {
     setTheme(nextTheme);
@@ -51,7 +82,7 @@ export function PhoneSettingsScreen({
         >
           <ChevronLeft className="h-5 w-5" />
         </Button>
-        <h1 className="m-0 text-center text-[1.12rem] font-semibold text-foreground">
+        <h1 className="m-0 text-center text-lg font-semibold text-foreground">
           {en.settings}
         </h1>
         <Button
@@ -69,6 +100,22 @@ export function PhoneSettingsScreen({
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pt-1">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="phoneName">{en.phoneName}</Label>
+          <Input
+            id="phoneName"
+            name="phoneName"
+            maxLength={64}
+            required
+            value={phoneName}
+            onChange={(event) => {
+              const next = event.target.value;
+              setPhoneName(next);
+              scheduleNameSave(next);
+            }}
+          />
+        </div>
+
         <Card className="flex flex-col gap-2.5 border-0 bg-muted p-3">
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {en.appearance}
@@ -171,12 +218,16 @@ export async function mountPhoneSettings(
   root: HTMLElement,
   onSelectTab: (tab: PhoneTab) => void,
 ): Promise<void> {
-  const settings = await api.getSettings();
+  const [settings, identity] = await Promise.all([
+    api.getSettings(),
+    api.phoneIdentity(),
+  ]);
   applyTheme(settings.theme);
   const reactRoot = getOrCreateRoot(root);
   reactRoot.render(
     <PhoneSettingsScreen
       initialSettings={settings}
+      initialPhoneName={identity.name}
       onSelectTab={onSelectTab}
     />,
   );
