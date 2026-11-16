@@ -44,13 +44,26 @@ struct SendImagesIntent: AppIntent {
     }
 
     private func writeIncomingImages() throws {
-        guard let container = FileManager.default.containerURL(
+        let incoming: URL
+        if let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.alexnguyen03.fastshare"
-        ) else {
-            throw FastShareIntentError.appGroupUnavailable
+        ) {
+            incoming = container.appendingPathComponent("incoming", isDirectory: true)
+        } else {
+            // AppIntents run in the app process, so work inside the app data
+            // directory when the app group entitlement is unavailable.
+            guard let support = FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first,
+            let bundleID = Bundle.main.bundleIdentifier else {
+                throw FastShareIntentError.appGroupUnavailable
+            }
+            incoming = support
+                .appendingPathComponent(bundleID, isDirectory: true)
+                .appendingPathComponent("incoming", isDirectory: true)
         }
 
-        let incoming = container.appendingPathComponent("incoming", isDirectory: true)
         try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
 
         var names: [String] = []
