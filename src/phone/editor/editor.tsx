@@ -1,8 +1,6 @@
 import * as React from "react";
 import {
-  ArrowRight,
   ArrowUpRight,
-  Check,
   ChevronDown,
   Crop,
   Grid,
@@ -13,7 +11,6 @@ import {
   X,
 } from "lucide-react";
 import { en } from "../../shared/locales/en";
-import { cn } from "../../shared/lib/utils";
 import { markColors, type EditorTool, type Mark } from "../../shared/tools";
 import {
   AlertDialog,
@@ -52,6 +49,27 @@ const toolIcons: Record<EditorTool, React.ReactNode> = {
   text: <Type className="h-4 w-4" />,
 };
 
+function SendIcon({ className }: { className?: string }): React.JSX.Element {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
+      <path d="m21.854 2.147-10.94 10.939" />
+    </svg>
+  );
+}
+
 function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element {
   const [tool, setTool] = React.useState<EditorTool>("arrow");
   const [color, setColor] = React.useState<string>(markColors[0]);
@@ -60,10 +78,6 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   const [sending, setSending] = React.useState<boolean>(false);
   const [statusLine, setStatusLine] = React.useState<string>("");
   const [switchConfirmOpen, setSwitchConfirmOpen] = React.useState<boolean>(false);
-  const [removedDraft, setRemovedDraft] = React.useState<{
-    draft: Draft;
-    index: number;
-  } | null>(null);
   const [removedMarks, setRemovedMarks] = React.useState<Mark[]>([]);
   const [, forceRender] = React.useReducer((x: number) => x + 1, 0);
 
@@ -74,14 +88,11 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   const draggingRef = React.useRef(false);
   const originRef = React.useRef({ x: 0, y: 0 });
   const currentMarkRef = React.useRef<Mark | null>(null);
+  const touchSwipeRef = React.useRef<{ x: number; y: number } | null>(null);
+  const blankSwipeRef = React.useRef<{ x: number; y: number } | null>(null);
   const pendingBatchIdRef = React.useRef<string | null>(null);
 
   const currentDraft = options.drafts[selected] ?? options.drafts[0];
-  const undoRemoveTimerRef = React.useRef<number>(0);
-
-  React.useEffect(() => {
-    return () => window.clearTimeout(undoRemoveTimerRef.current);
-  }, []);
 
   function undoMark(): void {
     if (!currentDraft || currentDraft.marks.length === 0) {
@@ -109,35 +120,19 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     setRemovedMarks([]);
   }
 
-  function removeDraftAt(index: number): void {
-    const draft = options.drafts[index];
-    if (!draft || sending) {
+  function swipeTo(offset: number): void {
+    if (options.drafts.length < 2) {
       return;
     }
-    options.drafts.splice(index, 1);
-    setRemovedDraft({ draft, index });
-    setRemovedMarks([]);
-    setSelected((prev) =>
-      Math.max(0, Math.min(prev, options.drafts.length - 1)),
-    );
-    setRemovedMarks([]);
-    forceRender();
-    window.clearTimeout(undoRemoveTimerRef.current);
-    undoRemoveTimerRef.current = window.setTimeout(() => {
-      setRemovedDraft(null);
-    }, 7000);
+    const next = (selected + offset + options.drafts.length) % options.drafts.length;
+    selectDraftAt(next);
   }
 
-  function undoRemove(): void {
-    if (!removedDraft) {
-      return;
-    }
-    window.clearTimeout(undoRemoveTimerRef.current);
-    options.drafts.splice(removedDraft.index, 0, removedDraft.draft);
-    setSelected(removedDraft.index);
-    setRemovedMarks([]);
-    setRemovedDraft(null);
-    forceRender();
+  function touchCenter(event: React.TouchEvent<HTMLCanvasElement>) {
+    return {
+      x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
+      y: (event.touches[0].clientY + event.touches[1].clientY) / 2,
+    };
   }
 
   const paint = React.useCallback(() => {
@@ -262,10 +257,9 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     ["blur", en.blur],
     ["text", en.text],
   ];
-  const colorLabels = [en.red, en.white, en.black];
 
   return (
-    <section className="panel editor flex h-[100svh] max-h-[100svh] w-full flex-col overflow-hidden bg-background px-2.5 pb-2 text-foreground sm:px-3.5">
+    <section className="panel editor relative flex h-[100svh] max-h-[100svh] w-full flex-col overflow-hidden bg-background px-2.5 pb-2 text-foreground sm:px-3.5">
       <header className="grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2.5">
         <Button
           variant="secondary"
@@ -281,7 +275,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
 
         <Button
           variant="secondary"
-          aria-label={`${en.toComputer(options.pcName)} â€” ${options.online ? en.onlineStatus : en.offlineStatus}`}
+          aria-label={`${en.toComputer(options.pcName)} Ã¢â‚¬â€ ${options.online ? en.onlineStatus : en.offlineStatus}`}
           className="h-11 min-w-0 justify-center gap-2 rounded-full px-3.5"
           onClick={() => {
             if (options.drafts.some((item) => item.marks.length > 0)) {
@@ -298,23 +292,25 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
 
         <Button
           variant="default"
-          className="h-11 gap-1.5 rounded-full px-4 font-semibold"
+          size="icon"
+          aria-label={en.sendCount(options.drafts.length)}
+          title={en.sendCount(options.drafts.length)}
+          className="h-11 w-11 rounded-full"
           disabled={sending || options.drafts.length === 0}
           onClick={() => {
             void handleSend();
           }}
         >
-          <span>{sending ? en.sending : en.sendCount(options.drafts.length)}</span>
           {sending ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
-            <ArrowRight className="h-4 w-4" />
+            <SendIcon className="h-5 w-5" />
           )}
         </Button>
       </header>
 
       <div className="editor-tool-row flex shrink-0 items-center justify-between gap-1.5 px-0.5 pt-2">
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex w-[72px] shrink-0 items-center gap-1">
           <Button
             variant="secondary"
             size="icon"
@@ -356,33 +352,15 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex w-[72px] shrink-0 items-center justify-end">
           {tool === "arrow" || tool === "text" ? (
-            <>
-              {markColors.map((value, index) => (
-                <Button
-                  key={value}
-                  variant="ghost"
-                  aria-label={colorLabels[index] ?? value}
-                  aria-pressed={color === value}
-                  title={colorLabels[index] ?? value}
-                  style={{ background: value }}
-                  className={cn(
-                    "h-6 w-6 rounded-full p-0 ring-1 ring-border/70 sm:h-7 sm:w-7",
-                    color === value &&
-                      "ring-2 ring-primary ring-offset-2 ring-offset-background",
-                  )}
-                  onClick={() => setColor(value)}
-                />
-              ))}
-              <ColorPickerButton
-                value={color}
-                label={en.customColor}
-                title={en.customColor}
-                className="h-7 w-7"
-                onChange={setColor}
-              />
-            </>
+            <ColorPickerButton
+              value={color}
+              label={en.customColor}
+              title={en.customColor}
+              className="h-9 w-9"
+              onChange={setColor}
+            />
           ) : null}
         </div>
       </div>
@@ -433,9 +411,33 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
           role="img"
           aria-label={en.image}
           className="stage block h-full w-full touch-none bg-transparent"
+          onTouchStart={(event) => {
+            if (event.touches.length >= 2) {
+              touchSwipeRef.current = touchCenter(event);
+            }
+          }}
+          onTouchMove={(event) => {
+            if (event.touches.length >= 2) {
+              event.preventDefault();
+            }
+          }}
+          onTouchEnd={(event) => {
+            const start = touchSwipeRef.current;
+            touchSwipeRef.current = null;
+            if (!start || event.changedTouches.length === 0 || options.drafts.length < 2) {
+              return;
+            }
+            const end = event.changedTouches[0];
+            const dx = end.clientX - start.x;
+            const dy = end.clientY - start.y;
+            if (Math.abs(dx) >= 48 && Math.abs(dy) <= 32) {
+              swipeTo(dx < 0 ? 1 : -1);
+            }
+          }}
           onPointerDown={(event) => {
             const start = point(event);
             if (!currentDraft || !start) {
+              blankSwipeRef.current = { x: event.clientX, y: event.clientY };
               return;
             }
             if (tool === "text") {
@@ -459,6 +461,11 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             originRef.current = start;
             event.currentTarget.setPointerCapture(event.pointerId);
           }}
+          onPointerCancel={() => {
+            draggingRef.current = false;
+            currentMarkRef.current = null;
+            blankSwipeRef.current = null;
+          }}
           onPointerMove={(event) => {
             if (!draggingRef.current) {
               return;
@@ -476,6 +483,20 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             paint();
           }}
           onPointerUp={(event) => {
+            const blank = blankSwipeRef.current;
+            if (blank) {
+              blankSwipeRef.current = null;
+              const dx = event.clientX - blank.x;
+              const dy = event.clientY - blank.y;
+              if (
+                options.drafts.length > 1 &&
+                Math.abs(dx) >= 48 &&
+                Math.abs(dy) <= 32
+              ) {
+                swipeTo(dx < 0 ? 1 : -1);
+              }
+              return;
+            }
             if (!draggingRef.current) {
               return;
             }
@@ -503,17 +524,6 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             <p className="text-sm font-medium text-muted-foreground">
               {en.noImagesLeft}
             </p>
-            {removedDraft ? (
-              <Button
-                variant="secondary"
-                size="sm"
-                className="pointer-events-auto"
-                onClick={undoRemove}
-              >
-                <Undo2 className="h-4 w-4" />
-                <span>{en.undo}</span>
-              </Button>
-            ) : null}
           </div>
         ) : null}
 
@@ -536,40 +546,9 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
         ) : null}
       </div>
 
-      <footer className="flex flex-col items-center gap-1 pt-1">
-        <div className="flex w-full justify-center gap-2 overflow-x-auto py-0.5">
-          {options.drafts.map((item, index) => (
-            <ThumbButton
-              key={item.id}
-              item={item}
-              index={index}
-              selected={index === selected}
-              onSelect={() => selectDraftAt(index)}
-              onRemove={() => removeDraftAt(index)}
-            />
-          ))}
-        </div>
-        {options.drafts.length > 0 ? (
-          <p className="m-0 text-center text-xs text-muted-foreground">
-            {en.editHint}
-          </p>
-        ) : null}
-        {removedDraft ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span>{en.imageRemoved}</span>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="h-7 px-2.5"
-              onClick={undoRemove}
-            >
-              <Undo2 className="h-3.5 w-3.5" />
-              <span>{en.undo}</span>
-            </Button>
-          </div>
-        ) : null}
+      <footer className="absolute bottom-[max(0.5rem,env(safe-area-inset-bottom,0px))] left-3 right-3 z-10 flex justify-center">
         {statusLine ? (
-          <p className="m-0 text-center text-xs font-medium text-destructive">
+          <p className="m-0 max-w-sm rounded-full bg-background/80 px-3 py-1.5 text-center text-xs font-medium text-destructive shadow-sm backdrop-blur-sm">
             {statusLine}
           </p>
         ) : null}
@@ -590,70 +569,6 @@ function imageDataUrl(base64: string): string {
     return `data:image/webp;base64,${trimmed}`;
   }
   return `data:image/png;base64,${trimmed}`;
-}
-
-function ThumbButton({
-  item,
-  index,
-  selected,
-  onSelect,
-  onRemove,
-}: {
-  item: Draft;
-  index: number;
-  selected: boolean;
-  onSelect: () => void;
-  onRemove: () => void;
-}): React.JSX.Element {
-  return (
-    <div className="relative shrink-0">
-      <Button
-        variant="ghost"
-        aria-label={`${en.image} ${index + 1}`}
-        aria-pressed={selected}
-        className={cn(
-          "h-[70px] w-[54px] overflow-hidden rounded-lg bg-muted p-0 transition-opacity",
-          selected
-            ? "opacity-100 ring-2 ring-primary"
-            : "opacity-60 hover:opacity-90",
-        )}
-        onKeyDown={(event) => {
-          if (event.key === "Delete" || event.key === "Backspace") {
-            event.preventDefault();
-            onRemove();
-          }
-        }}
-        onClick={onSelect}
-      >
-        <img
-          src={imageDataUrl(item.pngBase64)}
-          alt={en.image}
-          className="h-full w-full object-contain"
-        />
-        {item.marks.length > 0 ? (
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute top-1 left-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-primary-foreground"
-          >
-            <Check className="h-2.5 w-2.5 stroke-[3]" />
-          </span>
-        ) : null}
-      </Button>
-      <Button
-        variant="secondary"
-        size="icon"
-        aria-label={`${en.removeImage} ${index + 1}`}
-        title={en.removeImage}
-        className="absolute top-0.5 right-0.5 h-6 w-6 rounded-full bg-foreground/85 p-0 text-background hover:bg-foreground"
-        onClick={(event) => {
-          event.stopPropagation();
-          onRemove();
-        }}
-      >
-        <X className="h-3.5 w-3.5" />
-      </Button>
-    </div>
-  );
 }
 
 export function mountEditor(root: HTMLElement, options: Options): void {

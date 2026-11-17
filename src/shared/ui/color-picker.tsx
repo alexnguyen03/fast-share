@@ -1,5 +1,4 @@
 import * as React from "react";
-import { Pipette } from "lucide-react";
 import { cn } from "../lib/utils";
 
 export type ColorPickerButtonProps = Omit<
@@ -24,7 +23,7 @@ export function ColorPickerButton({
       title={label}
       aria-label={label}
       className={cn(
-        "relative inline-flex h-10 w-10 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-[conic-gradient(from_20deg,#f87171,#fbbf24,#34d399,#38bdf8,#a78bfa,#f472b6,#f87171)] ring-1 ring-border transition-opacity focus-within:ring-2 focus-within:ring-primary",
+        "relative inline-flex cursor-pointer items-center justify-center overflow-hidden rounded-full border border-border/80 shadow-sm ring-1 ring-border/60 transition-opacity hover:opacity-90",
         className,
       )}
     >
@@ -39,10 +38,9 @@ export function ColorPickerButton({
       />
       <span
         aria-hidden="true"
-        className="flex h-full w-full items-center justify-center bg-foreground/20 text-background backdrop-blur-[1px]"
-      >
-        <Pipette className="h-5 w-5 drop-shadow" />
-      </span>
+        className="h-full w-full rounded-full"
+        style={{ backgroundColor: value }}
+      />
     </label>
   );
 }
