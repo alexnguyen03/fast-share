@@ -3,12 +3,17 @@ import {
   ArrowUpRight,
   ChevronDown,
   Crop,
+  ChevronLeft,
+  ChevronRight,
+  Eraser,
   Grid,
+  ImagePlus,
+  PenTool,
   Loader2,
   Redo2,
+  Trash2,
   Type,
   Undo2,
-  X,
 } from "lucide-react";
 import { en } from "../../shared/locales/en";
 import { markColors, type EditorTool, type Mark } from "../../shared/tools";
@@ -26,6 +31,7 @@ import { Button } from "../../shared/ui/button";
 import { Input } from "../../shared/ui/input";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import { ColorPickerButton } from "../../shared/ui/color-picker";
+import { filesToBase64 } from "../devices/devices";
 
 export type Draft = {
   id: string;
@@ -39,6 +45,7 @@ type Options = {
   drafts: Draft[];
   onClose: () => void;
   onSwitch: () => void;
+  onChange?: () => void;
   onSend: (batchId: string, images: string[]) => Promise<void>;
 };
 
@@ -47,6 +54,7 @@ const toolIcons: Record<EditorTool, React.ReactNode> = {
   arrow: <ArrowUpRight className="h-4 w-4" />,
   blur: <Grid className="h-4 w-4" />,
   text: <Type className="h-4 w-4" />,
+  erase: <Eraser className="h-4 w-4" />,
 };
 
 function SendIcon({ className }: { className?: string }): React.JSX.Element {
@@ -74,12 +82,23 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   const [tool, setTool] = React.useState<EditorTool>("arrow");
   const [color, setColor] = React.useState<string>(markColors[0]);
   const [selected, setSelected] = React.useState<number>(0);
-  const [textValue, setTextValue] = React.useState<string>("");
+  const [editing, setEditing] = React.useState<{ x: number; y: number; text: string } | null>(null);
+  const editingRef = React.useRef(editing);
+  editingRef.current = editing;
+  const moveRef = React.useRef<{ index: number; last: { x: number; y: number }; moved: boolean } | null>(null);
+  const textTapRef =React.useRef<{ x: number; y: number } | null>(null);
   const [sending, setSending] = React.useState<boolean>(false);
   const [statusLine, setStatusLine] = React.useState<string>("");
   const [switchConfirmOpen, setSwitchConfirmOpen] = React.useState<boolean>(false);
+  const [markup, setMarkup] = React.useState<boolean>(true);
+  const [deleteOpen, setDeleteOpen] = React.useState<boolean>(false);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [removedMarks, setRemovedMarks] = React.useState<Mark[]>([]);
-  const [, forceRender] = React.useReducer((x: number) => x + 1, 0);
+  const [version, forceRender] = React.useReducer((x: number) => x + 1, 0);
+  // marks/drafts are mutated in place, so every forceRender is a change worth persisting
+  React.useEffect(() => {
+    options.onChange?.();
+  }, [version]);
 
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const stageBoxRef = React.useRef<HTMLDivElement | null>(null);
@@ -118,6 +137,45 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   function selectDraftAt(index: number): void {
     setSelected(Math.max(0, index));
     setRemovedMarks([]);
+  }
+
+  // drafts is the array send.tsx keeps as pendingDrafts, so mutating it in place keeps both in sync
+  function deleteCurrent(): void {
+    options.drafts.splice(selected, 1);
+    if (options.drafts.length === 0) {
+      options.onClose();
+      return;
+    }
+    selectDraftAt(Math.min(selected, options.drafts.length - 1));
+    forceRender();
+  }
+
+  async function addImages(files: File[]): Promise<void> {
+    const encoded = await filesToBase64(files);
+    if (encoded.length === 0) {
+      return;
+    }
+    const first = options.drafts.length;
+    const stamp = Date.now();
+    encoded.forEach((pngBase64, index) =>
+      options.drafts.push({ id: `draft-${stamp}-${index}`, pngBase64, marks: [] }),
+    );
+    selectDraftAt(first);
+    forceRender();
+  }
+
+  function commitText(): void {
+    const current = editingRef.current;
+    editingRef.current = null;
+    setEditing(null);
+    const text = current?.text.trim();
+    if (!current || !text || !currentDraft) {
+      return;
+    }
+    currentDraft.marks.push({ tool: "text", x: current.x, y: current.y, text, color });
+    setRemovedMarks([]);
+    forceRender();
+    paint();
   }
 
   function swipeTo(offset: number): void {
@@ -229,6 +287,22 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     return { x, y };
   }
 
+  function eraseAt(event: React.PointerEvent<HTMLCanvasElement>): void {
+    const p = point(event);
+    const ctx = canvasRef.current?.getContext("2d");
+    if (!p || !ctx || !currentDraft) {
+      return;
+    }
+    const view = viewRectRef.current;
+    const kept = currentDraft.marks.filter((mark) => !hitMark(mark, p, view, ctx));
+    if (kept.length !== currentDraft.marks.length) {
+      currentDraft.marks = kept;
+      setRemovedMarks([]);
+      forceRender();
+      paint();
+    }
+  }
+
   async function handleSend(): Promise<void> {
     setSending(true);
     setStatusLine("");
@@ -256,27 +330,26 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     ["arrow", en.arrow],
     ["blur", en.blur],
     ["text", en.text],
+    ["erase", en.erase],
   ];
 
   return (
     <section className="panel editor relative flex h-[100svh] max-h-[100svh] w-full flex-col overflow-hidden bg-background px-2.5 pb-2 text-foreground sm:px-3.5">
-      <header className="grid grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-2.5">
+      <header className="flex items-center justify-between gap-2 pt-1">
         <Button
-          variant="secondary"
-          size="icon"
-          aria-label={en.close}
+          variant="ghost"
+          aria-label={en.done}
           onClick={() => {
             options.onClose();
           }}
-          className="h-11 w-11 rounded-full"
+          className="h-11 px-2 text-base font-semibold"
         >
-          <X className="h-4 w-4" />
+          {en.done}
         </Button>
-
         <Button
           variant="secondary"
-          aria-label={`${en.toComputer(options.pcName)} Ã¢â‚¬â€ ${options.online ? en.onlineStatus : en.offlineStatus}`}
-          className="h-11 min-w-0 justify-center gap-2 rounded-full px-3.5"
+          aria-label={`${en.toComputer(options.pcName)} - ${options.online ? en.onlineStatus : en.offlineStatus}`}
+          className="h-9 min-w-0 justify-center gap-2 rounded-full px-3.5"
           onClick={() => {
             if (options.drafts.some((item) => item.marks.length > 0)) {
               setSwitchConfirmOpen(true);
@@ -289,7 +362,17 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
           <span className="truncate">{en.toComputer(options.pcName)}</span>
           <ChevronDown className="h-4 w-4 shrink-0 opacity-75" />
         </Button>
-
+        <div className="flex items-center gap-1">
+        <Button
+          variant={markup ? "default" : "secondary"}
+          size="icon"
+          aria-label={en.markup}
+          aria-pressed={markup}
+          className="h-11 w-11 rounded-full"
+          onClick={() => setMarkup(!markup)}
+        >
+          <PenTool className="h-5 w-5" />
+        </Button>
         <Button
           variant="default"
           size="icon"
@@ -307,76 +390,8 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             <SendIcon className="h-5 w-5" />
           )}
         </Button>
+        </div>
       </header>
-
-      <div className="editor-tool-row flex shrink-0 items-center justify-between gap-1.5 px-0.5 pt-2">
-        <div className="flex w-[72px] shrink-0 items-center gap-1">
-          <Button
-            variant="secondary"
-            size="icon"
-            aria-label={en.undo}
-            disabled={(currentDraft?.marks.length ?? 0) === 0}
-            className="h-9 w-9 rounded-full"
-            onClick={() => undoMark()}
-          >
-            <Undo2 className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="secondary"
-            size="icon"
-            aria-label={en.redo}
-            disabled={removedMarks.length === 0}
-            className="h-9 w-9 rounded-full"
-            onClick={() => redoMark()}
-          >
-            <Redo2 className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <div className="flex min-w-0 flex-1 items-center justify-center">
-          <div className="flex min-w-0 items-center gap-0.5 rounded-full border border-border bg-muted/80 p-1 shadow-sm">
-            {toolButtons.map(([name, label]) => (
-              <Button
-                key={name}
-                variant={tool === name ? "default" : "ghost"}
-                size="icon"
-                aria-label={label}
-                aria-pressed={tool === name}
-                title={label}
-                className="h-8 w-8 rounded-full sm:h-9 sm:w-9"
-                onClick={() => setTool(name)}
-              >
-                {toolIcons[name]}
-              </Button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex w-[72px] shrink-0 items-center justify-end">
-          {tool === "arrow" || tool === "text" ? (
-            <ColorPickerButton
-              value={color}
-              label={en.customColor}
-              title={en.customColor}
-              className="h-9 w-9"
-              onChange={setColor}
-            />
-          ) : null}
-        </div>
-      </div>
-
-      {tool === "text" ? (
-        <div className="mx-auto w-full max-w-md">
-          <Input
-            type="text"
-            maxLength={80}
-            placeholder={en.textPlaceholder}
-            value={textValue}
-            onChange={(event) => setTextValue(event.target.value)}
-            className="rounded-full border-border/80 bg-muted/80"
-          />
-        </div>
-      ) : null}
 
       <AlertDialog
         open={switchConfirmOpen}
@@ -401,10 +416,10 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
         </AlertDialogContent>
       </AlertDialog>
 
-      <div className="flex min-h-0 flex-1 gap-2 pt-2 pl-0">
+      <div className="relative flex min-h-0 flex-1 pt-2">
       <div
         ref={stageBoxRef}
-        className="editor-stage relative min-w-0 flex-1 overflow-hidden rounded-[2rem] bg-muted"
+        className="editor-stage relative min-w-0 flex-1 overflow-hidden rounded-xl bg-muted"
       >
         <canvas
           ref={canvasRef}
@@ -440,34 +455,58 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
               blankSwipeRef.current = { x: event.clientX, y: event.clientY };
               return;
             }
-            if (tool === "text") {
-              const trimmed = textValue.trim();
-              if (!trimmed) {
-                return;
+            // Dragging a mark of the active tool moves it instead of drawing a new one.
+            const ctx = event.currentTarget.getContext("2d");
+            if (ctx && tool !== "erase" && tool !== "crop") {
+              const marks = currentDraft.marks;
+              for (let index = marks.length - 1; index >= 0; index--) {
+                if (marks[index].tool === tool && hitMark(marks[index], start, viewRectRef.current, ctx)) {
+                  moveRef.current = { index, last: start, moved: false };
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  return;
+                }
               }
-              currentDraft.marks.push({
-                tool: "text",
-                x: start.x,
-                y: start.y,
-                text: trimmed,
-                color,
-              });
-              setRemovedMarks([]);
-              forceRender();
-              paint();
+            }
+            if (tool === "text") {
+              commitText();
+              // the input opens on pointerup: focusing it here would be undone by the tap's own focus change
+              textTapRef.current = start;
               return;
+            }
+            if (tool === "erase") {
+              eraseAt(event);
             }
             draggingRef.current = true;
             originRef.current = start;
             event.currentTarget.setPointerCapture(event.pointerId);
           }}
           onPointerCancel={() => {
+            moveRef.current = null;
             draggingRef.current = false;
             currentMarkRef.current = null;
             blankSwipeRef.current = null;
           }}
           onPointerMove={(event) => {
+            const move = moveRef.current;
+            if (move && currentDraft) {
+              const p = point(event);
+              if (p) {
+                currentDraft.marks[move.index] = moveMark(
+                  currentDraft.marks[move.index],
+                  p.x - move.last.x,
+                  p.y - move.last.y,
+                );
+                move.last = p;
+                move.moved = true;
+                paint();
+              }
+              return;
+            }
             if (!draggingRef.current) {
+              return;
+            }
+            if (tool === "erase") {
+              eraseAt(event);
               return;
             }
             const end = point(event);
@@ -483,6 +522,15 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             paint();
           }}
           onPointerUp={(event) => {
+            const move = moveRef.current;
+            if (move) {
+              moveRef.current = null;
+              if (move.moved) {
+                setRemovedMarks([]);
+                forceRender();
+              }
+              return;
+            }
             const blank = blankSwipeRef.current;
             if (blank) {
               blankSwipeRef.current = null;
@@ -497,10 +545,19 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
               }
               return;
             }
+            const tap = textTapRef.current;
+            if (tap) {
+              textTapRef.current = null;
+              setEditing({ x: tap.x, y: tap.y, text: "" });
+              return;
+            }
             if (!draggingRef.current) {
               return;
             }
             draggingRef.current = false;
+            if (tool === "erase") {
+              return;
+            }
             const end = point(event) ?? originRef.current;
             const mark = markFromDrag(tool, originRef.current, end, color);
             currentMarkRef.current = null;
@@ -527,34 +584,249 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
           </div>
         ) : null}
 
-      </div>
-
-        {options.drafts.length > 1 ? (
-          <button
-            type="button"
-            aria-label={en.nextImage}
-            className="flex w-12 shrink-0 items-center justify-center border border-border bg-muted text-muted-foreground transition hover:bg-muted/70 focus-visible:outline-2 focus-visible:outline-primary"
-            onClick={() => selectDraftAt((selected + 1) % options.drafts.length)}
-          >
-            <span
-              className="text-xs font-medium uppercase tracking-[0.2em]"
-              style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
-            >
-              {en.nextImage}
-            </span>
-          </button>
+        {editing ? (
+          <input
+            autoFocus
+            maxLength={80}
+            placeholder={en.textPlaceholder}
+            value={editing.text}
+            onChange={(event) => setEditing({ ...editing, text: event.target.value })}
+            onBlur={commitText}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                commitText();
+              } else if (event.key === "Escape") {
+                editingRef.current = null;
+                setEditing(null);
+              }
+            }}
+            className="absolute z-10 m-0 rounded border border-dashed border-foreground/40 bg-transparent p-0 outline-none"
+            style={{
+              left: viewRectRef.current.x + editing.x * viewRectRef.current.w,
+              top:
+                viewRectRef.current.y +
+                editing.y * viewRectRef.current.h -
+                textSize(viewRectRef.current.w),
+              width: `${Math.max(6, editing.text.length + 1)}ch`,
+              font: `600 ${textSize(viewRectRef.current.w)}px sans-serif`,
+              lineHeight: 1,
+              color,
+            }}
+          />
         ) : null}
       </div>
 
+        {markup ? (
+          <div className="absolute top-1/2 right-1.5 z-10 flex -translate-y-1/2 flex-col items-center gap-1 rounded-full bg-muted/90 p-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={en.undo}
+              disabled={(currentDraft?.marks.length ?? 0) === 0}
+              className="h-10 w-10 rounded-full"
+              onClick={() => undoMark()}
+            >
+              <Undo2 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={en.redo}
+              disabled={removedMarks.length === 0}
+              className="h-10 w-10 rounded-full"
+              onClick={() => redoMark()}
+            >
+              <Redo2 className="h-4 w-4" />
+            </Button>
+            <div className="my-0.5 h-px w-6 bg-border" />
+            {toolButtons.map(([name, label]) => (
+              <Button
+                key={name}
+                variant={tool === name ? "default" : "ghost"}
+                size="icon"
+                aria-label={label}
+                aria-pressed={tool === name}
+                title={label}
+                className="h-10 w-10 rounded-full"
+                onClick={() => setTool(name)}
+              >
+                {toolIcons[name]}
+              </Button>
+            ))}
+            <ColorPickerButton
+              value={color}
+              label={en.customColor}
+              title={en.customColor}
+              className="h-9 w-9"
+              onChange={setColor}
+            />
+            <div className="my-0.5 h-px w-6 bg-border" />
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={en.addImage}
+              title={en.addImage}
+              className="h-10 w-10 rounded-full"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <ImagePlus className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={en.deleteImage}
+              title={en.deleteImage}
+              disabled={options.drafts.length === 0}
+              className="h-10 w-10 rounded-full text-destructive"
+              onClick={() => setDeleteOpen(true)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : null}
+      </div>
+
+      {options.drafts.length > 1 ? (
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center pt-3 pb-[max(1rem,env(safe-area-inset-bottom,0px))]">
+          <div />
+          <div className="flex justify-center gap-1">
+            {options.drafts.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                aria-label={`${en.image} ${index + 1}`}
+                className="p-1"
+                onClick={() => selectDraftAt(index)}
+              >
+                <span
+                  className={`block h-2 w-2 rounded-full ${index === selected ? "bg-foreground" : "bg-foreground/30"}`}
+                />
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={en.prevImage}
+              className="h-9 w-9 rounded-full"
+              onClick={() => swipeTo(-1)}
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={en.nextImage}
+              className="h-9 w-9 rounded-full"
+              onClick={() => swipeTo(1)}
+            >
+              <ChevronRight className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="pb-[max(1rem,env(safe-area-inset-bottom,0px))]" />
+      )}
+
+      <Input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          event.target.value = "";
+          if (files.length > 0) {
+            void addImages(files);
+          }
+        }}
+      />
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{en.deleteImage}</AlertDialogTitle>
+            <AlertDialogDescription>{en.deleteImageConfirm}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{en.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setDeleteOpen(false);
+                deleteCurrent();
+              }}
+            >
+              {en.deleteImage}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <footer className="absolute bottom-[max(0.5rem,env(safe-area-inset-bottom,0px))] left-3 right-3 z-10 flex justify-center">
         {statusLine ? (
-          <p className="m-0 max-w-sm rounded-full bg-background/80 px-3 py-1.5 text-center text-xs font-medium text-destructive shadow-sm backdrop-blur-sm">
+          <p className="m-0 max-w-sm rounded-full bg-background/80 px-3 py-1.5 text-center text-xs font-medium text-destructive backdrop-blur-sm">
             {statusLine}
           </p>
         ) : null}
       </footer>
     </section>
   );
+}
+
+type View = { x: number; y: number; w: number; h: number };
+
+// Hit-test and move are the two per-tool behaviours every mark type must provide.
+function hitMark(
+  mark: Mark,
+  p: { x: number; y: number },
+  view: View,
+  ctx: CanvasRenderingContext2D,
+): boolean {
+  const px = p.x * view.w;
+  const py = p.y * view.h;
+  if (mark.tool === "arrow") {
+    const ax = mark.x1 * view.w;
+    const ay = mark.y1 * view.h;
+    const bx = mark.x2 * view.w - ax;
+    const by = mark.y2 * view.h - ay;
+    const t = Math.max(0, Math.min(1, ((px - ax) * bx + (py - ay) * by) / (bx * bx + by * by || 1)));
+    return Math.hypot(px - ax - t * bx, py - ay - t * by) <= 16;
+  }
+  if (mark.tool === "text") {
+    const size = textSize(view.w);
+    ctx.font = `600 ${size}px sans-serif`;
+    const x = mark.x * view.w;
+    const y = mark.y * view.h;
+    return px >= x - 8 && px <= x + ctx.measureText(mark.text).width + 8 && py >= y - size - 8 && py <= y + 8;
+  }
+  if (mark.tool === "blur") {
+    return p.x >= mark.x && p.x <= mark.x + mark.w && p.y >= mark.y && p.y <= mark.y + mark.h;
+  }
+  return false; // crop is removed with undo
+}
+
+function moveMark(mark: Mark, dx: number, dy: number): Mark {
+  if (mark.tool === "arrow") {
+    return { ...mark, x1: mark.x1 + dx, y1: mark.y1 + dy, x2: mark.x2 + dx, y2: mark.y2 + dy };
+  }
+  if (mark.tool === "text") {
+    return { ...mark, x: mark.x + dx, y: mark.y + dy };
+  }
+  if (mark.tool === "crop") {
+    return mark;
+  }
+  return {
+    ...mark,
+    x: Math.min(1 - mark.w, Math.max(0, mark.x + dx)),
+    y: Math.min(1 - mark.h, Math.max(0, mark.y + dy)),
+  };
+}
+
+function textSize(viewWidth: number): number {
+  return Math.max(14, viewWidth * 0.045);
 }
 
 function imageDataUrl(base64: string): string {
@@ -654,7 +926,7 @@ function drawMark(
     return;
   }
   if (mark.tool === "text") {
-    const size = Math.max(14, view.w * 0.045);
+    const size = textSize(view.w);
     const x = view.x + mark.x * view.w;
     const y = view.y + mark.y * view.h;
     context.font = `600 ${size}px sans-serif`;

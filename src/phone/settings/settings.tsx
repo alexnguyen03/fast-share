@@ -11,7 +11,9 @@ import {
 } from "../../shared/settings";
 import { Button } from "../../shared/ui/button";
 import { Card } from "../../shared/ui/card";
+import { Checkbox } from "../../shared/ui/checkbox";
 import { Input } from "../../shared/ui/input";
+import { setVibrateEnabled, vibrateEnabled } from "../haptics";
 import { Label } from "../../shared/ui/label";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import { showToast } from "../../shared/ui/toast";
@@ -30,6 +32,7 @@ export function PhoneSettingsScreen({
     initialSettings.theme ?? "emerald-light",
   );
   const [phoneName, setPhoneName] = React.useState(initialPhoneName);
+  const [vibrate, setVibrate] = React.useState(vibrateEnabled());
   const debounceRef = React.useRef<number>(0);
 
   const scheduleNameSave = React.useCallback((nextName: string) => {
@@ -190,6 +193,18 @@ export function PhoneSettingsScreen({
               ))}
             </div>
           </div>
+        </Card>
+
+        <Card className="flex flex-row items-center justify-between border-0 bg-muted p-3">
+          <Label htmlFor="vibrate">{en.vibrateAfterSend}</Label>
+          <Checkbox
+            id="vibrate"
+            checked={vibrate}
+            onCheckedChange={(next) => {
+              setVibrate(next === true);
+              setVibrateEnabled(next === true);
+            }}
+          />
         </Card>
 
         <Card className="mt-auto flex flex-col gap-1.5 border-0 bg-muted p-3">

@@ -1,4 +1,4 @@
-export type EditorTool = "crop" | "arrow" | "text" | "blur";
+export type EditorTool = "crop" | "arrow" | "text" | "blur" | "erase";
 
 export type Mark =
   | { tool: "crop"; x: number; y: number; w: number; h: number }

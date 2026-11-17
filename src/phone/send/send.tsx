@@ -1,7 +1,6 @@
 import * as React from "react";
 import {
   ArrowUpFromLine,
-  CheckCircle2,
   ChevronLeft,
   Laptop,
   X,
@@ -34,6 +33,8 @@ import { showToast } from "../../shared/ui/toast";
 import { filesToBase64, mountDevices } from "../devices/devices";
 import { mountEditor, type Draft } from "../editor/editor";
 import { PhoneFrame, type PhoneTab } from "../frame";
+import { loadDrafts, saveDrafts } from "../draft-store";
+import { buzzIfEnabled } from "../haptics";
 import { errorText, note } from "../log";
 import { mountPhoneSettings } from "../settings/settings";
 
@@ -48,8 +49,12 @@ let selectedPcIdState: string | null = null;
  */
 let pendingDrafts: Draft[] | null = null;
 
+let restored = false;
+let resumeOnce = false;
+
 function keepDrafts(drafts: Draft[]): void {
   pendingDrafts = drafts.length > 0 ? drafts : null;
+  saveDrafts(drafts);
 }
 
 export async function mountPhone(
@@ -58,6 +63,16 @@ export async function mountPhone(
 ): Promise<void> {
   const settings = await api.getSettings();
   applyTheme(settings.theme);
+
+  // After the OS kills the webview, pick the unsent drafts back up and reopen the editor.
+  if (!restored) {
+    restored = true;
+    const saved = await loadDrafts();
+    if (saved.length > 0 && !pendingDrafts) {
+      pendingDrafts = saved;
+      resumeOnce = true;
+    }
+  }
 
   if (!inboxBound) {
     inboxBound = true;
@@ -338,6 +353,11 @@ async function consumeInbox(
       navigateTab(root, tab);
       return;
     }
+    if (resumeOnce && pendingDrafts) {
+      resumeOnce = false;
+      await chooseDestination(root, pendingDrafts);
+      return;
+    }
     const known = await api.listKnownPcs();
     const reactRoot = getOrCreateRoot(root);
     reactRoot.render(
@@ -464,6 +484,7 @@ function showSheet(
             key={pc.pcId}
             variant="secondary"
             className="w-full justify-start gap-2.5"
+            disabled={!pc.online}
             onClick={() => openEditor(root, drafts, pc, all)}
           >
             <Laptop className="h-4 w-4 text-primary" />
@@ -541,17 +562,12 @@ function openEditor(
     pcName: pc.name,
     online: pc.online,
     drafts,
+    onChange: () => keepDrafts(drafts),
     onClose: () => {
       keepDrafts(drafts);
       void mountPhone(root, "send");
     },
-    onSwitch: () =>
-      showSheet(
-        root,
-        drafts,
-        all.filter((item) => item.online),
-        all,
-      ),
+    onSwitch: () => showSheet(root, drafts, all, all),
     onSend: async (batchId, images) => {
       try {
         await api.sendBatch(pc.pcId, batchId, images);
@@ -562,32 +578,8 @@ function openEditor(
             : en.sentTo(pc.name);
         note(sentMsg);
         showToast(sentMsg);
-        const reactRoot = getOrCreateRoot(root);
-        reactRoot.render(
-          <PhoneFrame
-            activeTab="send"
-            onSelectTab={(tab) => navigateTab(root, tab)}
-          >
-            <Card className="my-auto flex flex-col items-center gap-3 rounded-2xl border-0 bg-accent px-5 py-8 text-center">
-              <CheckCircle2 className="h-10 w-10 text-primary" />
-              <p className="text-base font-semibold text-foreground">
-                {images.length === 1
-                  ? `${en.sentTo(pc.name)} ${en.pasteReady}`
-                  : en.sentTo(pc.name)}
-              </p>
-              <Button
-                variant="default"
-                size="lg"
-                className="mt-1 w-full"
-                onClick={() => {
-                  void mountPhone(root, "send");
-                }}
-              >
-                {en.sendAnother}
-              </Button>
-            </Card>
-          </PhoneFrame>,
-        );
+        buzzIfEnabled();
+        void mountPhone(root, "send");
       } catch (error) {
         const message = errorText(error);
         note(message || en.didNotReceive(pc.name));
