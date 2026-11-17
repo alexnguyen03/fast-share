@@ -49,7 +49,7 @@ final class ShareViewController: UIViewController {
                     continuation.resume(returning: nil)
                     return
                 }
-                if let name = storeOriginalImage(from: url, in: inbox, index: index) {
+                if let name = self.storeOriginalImage(from: url, in: inbox, index: index) {
                     continuation.resume(returning: name)
                     return
                 }

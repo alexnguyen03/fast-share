@@ -38,7 +38,7 @@ struct SendImagesIntent: AppIntent {
 
     func perform() async throws -> some IntentResult {
         try await MainActor.run {
-            try writeIncomingImages()
+            try self.writeIncomingImages()
         }
         return .result()
     }
