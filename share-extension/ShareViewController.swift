@@ -49,24 +49,40 @@ final class ShareViewController: UIViewController {
                     continuation.resume(returning: nil)
                     return
                 }
-                let name = "shared-\(index).jpg"
-                let destination = inbox.appendingPathComponent(name)
-                try? FileManager.default.removeItem(at: destination)
-                guard
-                    let data = try? Data(contentsOf: url),
-                    let image = UIImage(data: data),
-                    let jpeg = image.jpegData(compressionQuality: 0.92)
-                else {
-                    continuation.resume(returning: nil)
+                if let name = storeOriginalImage(from: url, in: inbox, index: index) {
+                    continuation.resume(returning: name)
                     return
                 }
-                do {
-                    try jpeg.write(to: destination, options: .atomic)
-                    continuation.resume(returning: name)
-                } catch {
-                    continuation.resume(returning: nil)
-                }
+                continuation.resume(returning: nil)
             }
+        }
+    }
+
+    private func storeOriginalImage(from url: URL, in inbox: URL, index: Int) -> String? {
+        let ext = (url.pathExtension.lowercased())
+        let supported = ["png", "jpg", "jpeg", "gif", "webp"]
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+
+        let name = "shared-\(index).\(supported.contains(ext) ? ext : "png")"
+        let destination = inbox.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: destination)
+
+        if supported.contains(ext), let data = try? Data(contentsOf: url) {
+            do {
+                try data.write(to: destination, options: .atomic)
+                return name
+            } catch {
+                return nil
+            }
+        }
+
+        guard let image = UIImage(data: (try? Data(contentsOf: url)) ?? Data()),
+              let png = image.pngData() else { return nil }
+        do {
+            try png.write(to: destination, options: .atomic)
+            return name
+        } catch {
+            return nil
         }
     }
 

@@ -61,9 +61,17 @@ export async function mountPhone(
 
   if (!inboxBound) {
     inboxBound = true;
+    const refreshInbox = () => {
+      if (document.visibilityState === "visible") {
+        void consumeInbox(root, true);
+      }
+    };
     window.addEventListener("fast-share-inbox", () => {
       void consumeInbox(root, true, initialTab);
     });
+    window.addEventListener("visibilitychange", refreshInbox);
+    window.addEventListener("focus", refreshInbox);
+    window.setInterval(refreshInbox, 2500);
   }
   await consumeInbox(root, false, initialTab);
 }

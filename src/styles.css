@@ -259,18 +259,18 @@
   }
 
   .editor {
-    max-width: 440px;
-    margin: 0 auto;
+    width: 100%;
+    max-width: none;
+    margin: 0;
     gap: 0;
-    padding: 56px 14px 28px;
+    padding: max(8px, env(safe-area-inset-top, 0px)) 0
+      max(8px, env(safe-area-inset-bottom, 0px));
     background: var(--background);
   }
 
   .editor-stage {
     position: relative;
-    flex: 1;
     min-height: 0;
-    margin: 14px 0 12px;
   }
 
   .editor .stage {

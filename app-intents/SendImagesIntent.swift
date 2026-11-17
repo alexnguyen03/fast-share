@@ -67,18 +67,10 @@ struct SendImagesIntent: AppIntent {
         try FileManager.default.createDirectory(at: incoming, withIntermediateDirectories: true)
 
         var names: [String] = []
-        for image in images {
-            let name = "shared-\(names.count).jpg"
-            let destination = incoming.appendingPathComponent(name)
-            try? FileManager.default.removeItem(at: destination)
-
-            guard let sourceImage = UIImage(data: image.data),
-                  let jpeg = sourceImage.jpegData(compressionQuality: 0.92)
-            else {
+        for (index, image) in images.enumerated() {
+            guard let name = storeOriginalImage(image, index: index, in: incoming) else {
                 continue
             }
-
-            try jpeg.write(to: destination, options: [.atomic, .completeFileProtectionUnlessOpen])
             names.append(name)
         }
 
@@ -93,6 +85,40 @@ struct SendImagesIntent: AppIntent {
             to: incoming.appendingPathComponent("manifest.json"),
             options: .atomic
         )
+    }
+
+    private func storeOriginalImage(_ image: IntentFile, index: Int, in incoming: URL) -> String? {
+        let supported = ["png", "jpg", "jpeg", "gif", "webp"]
+        let sourceExtension = URL(fileURLWithPath: image.filename).pathExtension.lowercased()
+        let canPreserveBytes = supported.contains(sourceExtension)
+        let ext = canPreserveBytes ? sourceExtension : "png"
+        let name = "shared-\(index).\(ext)"
+        let destination = incoming.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: destination)
+
+        if canPreserveBytes {
+            do {
+                try image.data.write(
+                    to: destination,
+                    options: [.atomic, .completeFileProtectionUnlessOpen]
+                )
+                return name
+            } catch {
+                return nil
+            }
+        }
+
+        guard let sourceImage = UIImage(data: image.data),
+              let png = sourceImage.pngData() else { return nil }
+        do {
+            try png.write(
+                to: destination,
+                options: [.atomic, .completeFileProtectionUnlessOpen]
+            )
+            return name
+        } catch {
+            return nil
+        }
     }
 }
 
