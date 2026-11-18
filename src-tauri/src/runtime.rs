@@ -638,10 +638,35 @@ fn load_phone(dir: &std::path::Path) -> Result<PhoneIdentity, HostError> {
     }
     let identity = PhoneIdentity {
         device_id: DeviceId::generate(),
-        name: "My iPhone".to_string(),
+        name: default_phone_name(),
     };
     write_json(&path, &identity)?;
     Ok(identity)
+}
+
+/// Real device model on first run; the user can still rename it in Settings.
+fn default_phone_name() -> String {
+    #[cfg(target_os = "android")]
+    {
+        let prop = |key: &str| {
+            std::process::Command::new("getprop")
+                .arg(key)
+                .output()
+                .ok()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+                .filter(|value| !value.is_empty())
+        };
+        // shortcut: not the user-set device name (needs JNI), upgrade if the model reads too generic.
+        if let Some(model) = prop("ro.product.model") {
+            return match prop("ro.product.manufacturer") {
+                Some(brand) if !model.to_lowercase().starts_with(&brand.to_lowercase()) => {
+                    format!("{brand} {model}")
+                }
+                _ => model,
+            };
+        }
+    }
+    "Phone".to_string()
 }
 
 fn load_known_pcs(dir: &std::path::Path) -> Result<Vec<KnownPc>, HostError> {
