@@ -5,6 +5,7 @@ import {
   Crop,
   ChevronLeft,
   ChevronRight,
+  CopyPlus,
   Eraser,
   Grid,
   ImagePlus,
@@ -85,6 +86,11 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   const [editing, setEditing] = React.useState<{ x: number; y: number; text: string } | null>(null);
   const editingRef = React.useRef(editing);
   editingRef.current = editing;
+  const [sel, setSel] = React.useState<number | null>(null);
+  const [dragging, setDragging] = React.useState<boolean>(false);
+  const [sizeOpen, setSizeOpen] = React.useState<boolean>(false);
+  const selectedRef = React.useRef<number | null>(null);
+  const handleRef = React.useRef<{ kind: Handle["kind"]; index: number; start: Mark; h0: Pt } | null>(null);
   const moveRef = React.useRef<{ index: number; last: { x: number; y: number }; moved: boolean } | null>(null);
   const textTapRef =React.useRef<{ x: number; y: number } | null>(null);
   const [sending, setSending] = React.useState<boolean>(false);
@@ -117,6 +123,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     if (!currentDraft || currentDraft.marks.length === 0) {
       return;
     }
+    select(null);
     const mark = currentDraft.marks.splice(-1, 1)[0];
     setRemovedMarks((previous) => [...previous, mark]);
     forceRender();
@@ -128,13 +135,53 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
       return;
     }
     const mark = removedMarks[removedMarks.length - 1];
+    select(null);
     currentDraft.marks.push(mark);
     setRemovedMarks((previous) => previous.slice(0, -1));
     forceRender();
     paint();
   }
 
+  function select(index: number | null): void {
+    selectedRef.current = index;
+    setSel(index);
+    setSizeOpen(false);
+    paint();
+  }
+
+  function replaceSelected(next: Mark): void {
+    if (sel === null || !currentDraft) {
+      return;
+    }
+    currentDraft.marks[sel] = next;
+    forceRender();
+    paint();
+  }
+
+  function duplicateSelected(): void {
+    const mark = sel === null ? undefined : currentDraft?.marks[sel];
+    if (!mark || !currentDraft) {
+      return;
+    }
+    currentDraft.marks.push(moveMark(mark, 0.03, 0.03));
+    setRemovedMarks([]);
+    forceRender();
+    select(currentDraft.marks.length - 1);
+  }
+
+  function deleteSelected(): void {
+    if (sel === null || !currentDraft) {
+      return;
+    }
+    currentDraft.marks.splice(sel, 1);
+    setRemovedMarks([]);
+    forceRender();
+    select(null);
+  }
+
   function selectDraftAt(index: number): void {
+    selectedRef.current = null;
+    setSel(null);
     setSelected(Math.max(0, index));
     setRemovedMarks([]);
   }
@@ -247,6 +294,10 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     for (const mark of marks) {
       drawMark(ctx, mark, viewRectRef.current, img);
     }
+    const picked = selectedRef.current === null ? undefined : currentDraft.marks[selectedRef.current];
+    if (picked) {
+      drawSelection(ctx, picked, viewRectRef.current);
+    }
   }, [currentDraft]);
 
   React.useEffect(() => {
@@ -272,6 +323,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
 
   function point(
     event: React.PointerEvent<HTMLCanvasElement>,
+    allowOutside = false,
   ): { x: number; y: number } | null {
     const stage = canvasRef.current;
     if (!stage) {
@@ -281,7 +333,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     const viewRect = viewRectRef.current;
     const x = (event.clientX - bounds.left - viewRect.x) / viewRect.w;
     const y = (event.clientY - bounds.top - viewRect.y) / viewRect.h;
-    if (x < 0 || y < 0 || x > 1 || y > 1) {
+    if (!allowOutside && (x < 0 || y < 0 || x > 1 || y > 1)) {
       return null;
     }
     return { x, y };
@@ -297,6 +349,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     const kept = currentDraft.marks.filter((mark) => !hitMark(mark, p, view, ctx));
     if (kept.length !== currentDraft.marks.length) {
       currentDraft.marks = kept;
+      select(null);
       setRemovedMarks([]);
       forceRender();
       paint();
@@ -322,6 +375,25 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
           : en.didNotReceive(options.pcName),
       );
       setSending(false);
+    }
+  }
+
+  const cropMark = currentDraft?.marks.find((m) => m.tool === "crop");
+  const selMark = sel === null ? undefined : currentDraft?.marks[sel];
+  let menuPos: { left: number; top: number } | null = null;
+  const menuCtx = canvasRef.current?.getContext("2d");
+  if (selMark && menuCtx) {
+    const view = viewRectRef.current;
+    const geo = markGeometry(selMark, view, menuCtx);
+    const pts = geo.outline.length > 0 ? geo.outline : geo.handles;
+    if (pts.length > 0) {
+      const xs = pts.map((pt) => pt.x);
+      const boxW = stageBoxRef.current?.clientWidth ?? 0;
+      const left = view.x + (Math.min(...xs) + Math.max(...xs)) / 2;
+      menuPos = {
+        left: boxW > 0 ? Math.min(Math.max(left, 100), boxW - 100) : left,
+        top: Math.max(4, view.y + Math.min(...pts.map((pt) => pt.y)) - 60),
+      };
     }
   }
 
@@ -450,6 +522,24 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             }
           }}
           onPointerDown={(event) => {
+            const picked = selectedRef.current === null ? undefined : currentDraft?.marks[selectedRef.current];
+            const grip = event.currentTarget.getContext("2d");
+            const raw = point(event, true);
+            if (picked && grip && raw && selectedRef.current !== null) {
+              const view = viewRectRef.current;
+              const hit = markGeometry(picked, view, grip).handles.find(
+                (h) => Math.hypot(h.x - raw.x * view.w, h.y - raw.y * view.h) <= 22,
+              );
+              if (hit) {
+                handleRef.current = { kind: hit.kind, index: selectedRef.current, start: picked, h0: { x: hit.x, y: hit.y } };
+                setDragging(true);
+                event.currentTarget.setPointerCapture(event.pointerId);
+                return;
+              }
+            }
+            if (selectedRef.current !== null) {
+              select(null);
+            }
             const start = point(event);
             if (!currentDraft || !start) {
               blankSwipeRef.current = { x: event.clientX, y: event.clientY };
@@ -462,6 +552,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
               for (let index = marks.length - 1; index >= 0; index--) {
                 if (marks[index].tool === tool && hitMark(marks[index], start, viewRectRef.current, ctx)) {
                   moveRef.current = { index, last: start, moved: false };
+                  setDragging(true);
                   event.currentTarget.setPointerCapture(event.pointerId);
                   return;
                 }
@@ -481,12 +572,31 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             event.currentTarget.setPointerCapture(event.pointerId);
           }}
           onPointerCancel={() => {
+            handleRef.current = null;
+            setDragging(false);
             moveRef.current = null;
             draggingRef.current = false;
             currentMarkRef.current = null;
             blankSwipeRef.current = null;
           }}
           onPointerMove={(event) => {
+            const grab = handleRef.current;
+            if (grab && currentDraft) {
+              const p = point(event, true);
+              if (p) {
+                const view = viewRectRef.current;
+                currentDraft.marks[grab.index] = dragHandle(
+                  grab.start,
+                  grab.kind,
+                  { x: p.x * view.w, y: p.y * view.h },
+                  grab.h0,
+                  view,
+                  event.currentTarget.getContext("2d") as CanvasRenderingContext2D,
+                );
+                paint();
+              }
+              return;
+            }
             const move = moveRef.current;
             if (move && currentDraft) {
               const p = point(event);
@@ -522,13 +632,21 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             paint();
           }}
           onPointerUp={(event) => {
+            if (handleRef.current) {
+              handleRef.current = null;
+              setDragging(false);
+              forceRender();
+              return;
+            }
             const move = moveRef.current;
             if (move) {
               moveRef.current = null;
+              setDragging(false);
               if (move.moved) {
                 setRemovedMarks([]);
                 forceRender();
               }
+              select(move.index);
               return;
             }
             const blank = blankSwipeRef.current;
@@ -581,6 +699,96 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             <p className="text-sm font-medium text-muted-foreground">
               {en.noImagesLeft}
             </p>
+          </div>
+        ) : null}
+
+        {cropMark && cropMark.tool === "crop" ? (
+          <Button
+            variant="secondary"
+            size="icon"
+            aria-label={en.removeCrop}
+            title={en.removeCrop}
+            className="absolute z-20 h-8 w-8 rounded-full"
+            style={{
+              left: viewRectRef.current.x + (cropMark.x + cropMark.w) * viewRectRef.current.w - 36,
+              top: viewRectRef.current.y + cropMark.y * viewRectRef.current.h + 4,
+            }}
+            onClick={() => {
+              if (currentDraft) {
+                currentDraft.marks = currentDraft.marks.filter((m) => m.tool !== "crop");
+                setRemovedMarks([]);
+                forceRender();
+                paint();
+              }
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        ) : null}
+
+        {selMark && menuPos && !dragging ? (
+          <div
+            className="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-full bg-muted px-1.5 py-1"
+            style={{ left: menuPos.left, top: menuPos.top }}
+          >
+            {selMark.tool === "text" ? (
+              sizeOpen ? (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={en.smaller}
+                    className="h-9 rounded-full px-3 text-xs font-bold"
+                    onClick={() =>
+                      replaceSelected({ ...selMark, size: Math.max(0.3, (selMark.size ?? 1) / 1.15) })
+                    }
+                  >
+                    A-
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={en.larger}
+                    className="h-9 rounded-full px-3 text-base font-bold"
+                    onClick={() =>
+                      replaceSelected({ ...selMark, size: Math.min(8, (selMark.size ?? 1) * 1.15) })
+                    }
+                  >
+                    A+
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={en.fontSize}
+                  className="h-9 rounded-full px-3 text-base"
+                  onClick={() => setSizeOpen(true)}
+                >
+                  Aa
+                </Button>
+              )
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={en.duplicate}
+              title={en.duplicate}
+              className="h-9 w-9 rounded-full"
+              onClick={duplicateSelected}
+            >
+              <CopyPlus className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={en.deleteElement}
+              title={en.deleteElement}
+              className="h-9 w-9 rounded-full text-destructive"
+              onClick={deleteSelected}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
           </div>
         ) : null}
 
@@ -796,11 +1004,14 @@ function hitMark(
     return Math.hypot(px - ax - t * bx, py - ay - t * by) <= 16;
   }
   if (mark.tool === "text") {
-    const size = textSize(view.w);
-    ctx.font = `600 ${size}px sans-serif`;
-    const x = mark.x * view.w;
-    const y = mark.y * view.h;
-    return px >= x - 8 && px <= x + ctx.measureText(mark.text).width + 8 && py >= y - size - 8 && py <= y + 8;
+    const { size, width } = textMetrics(mark, view, ctx);
+    const angle = mark.rotation ?? 0;
+    const c = textCenter(mark, size, width, view);
+    const dx = px - c.x;
+    const dy = py - c.y;
+    const lx = dx * Math.cos(angle) + dy * Math.sin(angle);
+    const ly = -dx * Math.sin(angle) + dy * Math.cos(angle);
+    return Math.abs(lx) <= width / 2 + 8 && Math.abs(ly) <= size / 2 + 8;
   }
   if (mark.tool === "blur") {
     return p.x >= mark.x && p.x <= mark.x + mark.w && p.y >= mark.y && p.y <= mark.y + mark.h;
@@ -823,6 +1034,171 @@ function moveMark(mark: Mark, dx: number, dy: number): Mark {
     x: Math.min(1 - mark.w, Math.max(0, mark.x + dx)),
     y: Math.min(1 - mark.h, Math.max(0, mark.y + dy)),
   };
+}
+
+type Pt = { x: number; y: number };
+type Handle = { kind: "resize" | "rotate" | "p1" | "p2"; x: number; y: number };
+
+function textMetrics(
+  mark: Extract<Mark, { tool: "text" }>,
+  view: View,
+  ctx: CanvasRenderingContext2D,
+): { size: number; width: number } {
+  const size = textSize(view.w) * (mark.size ?? 1);
+  ctx.font = `600 ${size}px sans-serif`;
+  return { size, width: ctx.measureText(mark.text).width };
+}
+
+// Selection outline and drag handles, in view-relative px (add view.x/y to draw).
+function markGeometry(
+  mark: Mark,
+  view: View,
+  ctx: CanvasRenderingContext2D,
+): { outline: Pt[]; handles: Handle[] } {
+  if (mark.tool === "arrow") {
+    return {
+      outline: [],
+      handles: [
+        { kind: "p1", x: mark.x1 * view.w, y: mark.y1 * view.h },
+        { kind: "p2", x: mark.x2 * view.w, y: mark.y2 * view.h },
+      ],
+    };
+  }
+  if (mark.tool === "text") {
+    const { size, width } = textMetrics(mark, view, ctx);
+    const angle = mark.rotation ?? 0;
+    const c = textCenter(mark, size, width, view);
+    // (lx, ly) is relative to the box centre; rotation pivots there
+    const world = (lx: number, ly: number): Pt => ({
+      x: c.x + lx * Math.cos(angle) - ly * Math.sin(angle),
+      y: c.y + lx * Math.sin(angle) + ly * Math.cos(angle),
+    });
+    const hw = width / 2 + 4;
+    const hh = size / 2 + 4;
+    return {
+      outline: [world(-hw, -hh), world(hw, -hh), world(hw, hh), world(-hw, hh)],
+      handles: [
+        { kind: "resize", ...world(hw, hh) },
+        { kind: "rotate", ...world(0, hh + 30) },
+      ],
+    };
+  }
+  if (mark.tool === "blur") {
+    const x = mark.x * view.w;
+    const y = mark.y * view.h;
+    const w = mark.w * view.w;
+    const h = mark.h * view.h;
+    return {
+      outline: [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }],
+      handles: [{ kind: "resize", x: x + w, y: y + h }],
+    };
+  }
+  return { outline: [], handles: [] };
+}
+
+// Applies a handle drag to the mark as it was when the drag began.
+function textCenter(
+  mark: Extract<Mark, { tool: "text" }>,
+  size: number,
+  width: number,
+  view: View,
+): Pt {
+  return { x: mark.x * view.w + width / 2, y: mark.y * view.h - size / 2 };
+}
+
+function dragHandle(
+  start: Mark,
+  kind: Handle["kind"],
+  p: Pt,
+  h0: Pt,
+  view: View,
+  ctx: CanvasRenderingContext2D,
+): Mark {
+  const nx = p.x / view.w;
+  const ny = p.y / view.h;
+  if (start.tool === "arrow") {
+    return kind === "p1" ? { ...start, x1: nx, y1: ny } : { ...start, x2: nx, y2: ny };
+  }
+  if (start.tool === "text") {
+    const { size, width } = textMetrics(start, view, ctx);
+    const c = textCenter(start, size, width, view);
+    if (kind === "rotate") {
+      const turn = Math.atan2(p.y - c.y, p.x - c.x) - Math.atan2(h0.y - c.y, h0.x - c.x);
+      return { ...start, rotation: (start.rotation ?? 0) + turn };
+    }
+    const wanted = Math.hypot(p.x - c.x, p.y - c.y) / Math.max(1, Math.hypot(h0.x - c.x, h0.y - c.y));
+    const next = Math.min(8, Math.max(0.3, (start.size ?? 1) * wanted));
+    const ratio = next / (start.size ?? 1);
+    // keep the centre fixed: width and height both scale by ratio
+    return {
+      ...start,
+      size: next,
+      x: (c.x - (width * ratio) / 2) / view.w,
+      y: (c.y + (size * ratio) / 2) / view.h,
+    };
+  }
+  if (start.tool === "blur") {
+    return {
+      ...start,
+      w: Math.min(1 - start.x, Math.max(0.02, nx - start.x)),
+      h: Math.min(1 - start.y, Math.max(0.02, ny - start.y)),
+    };
+  }
+  return start;
+}
+
+// lucide "rotate-cw" and "move-diagonal-2" path data (24x24), drawn straight on the canvas
+const HANDLE_ICONS: Partial<Record<Handle["kind"], string[]>> = {
+  rotate: ["M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8", "M21 3v5h-5"],
+  resize: ["M19 13v6h-6", "M5 11V5h6", "m5 5 14 14"],
+};
+
+function drawSelection(context: CanvasRenderingContext2D, mark: Mark, view: View): void {
+  const { outline, handles } = markGeometry(mark, view, context);
+  context.save();
+  context.lineWidth = 1.5;
+  context.strokeStyle = primaryColor();
+  context.setLineDash([5, 4]);
+  if (outline.length > 0) {
+    context.beginPath();
+    outline.forEach((pt, i) =>
+      i === 0 ? context.moveTo(view.x + pt.x, view.y + pt.y) : context.lineTo(view.x + pt.x, view.y + pt.y),
+    );
+    context.closePath();
+    context.stroke();
+  }
+  context.setLineDash([]);
+  context.lineWidth = 2;
+  const primary = primaryColor();
+  for (const handle of handles) {
+    const icon = HANDLE_ICONS[handle.kind];
+    if (!icon) {
+      // arrow end points: plain dot, no ring
+      context.beginPath();
+      context.arc(view.x + handle.x, view.y + handle.y, 6, 0, Math.PI * 2);
+      context.fillStyle = primary;
+      context.fill();
+      continue;
+    }
+    context.save();
+    context.translate(view.x + handle.x - 12, view.y + handle.y - 12);
+    context.scale(1, 1);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    // white under-stroke keeps the bare icon readable on any image, it is not a border
+    context.lineWidth = 5;
+    context.strokeStyle = "rgba(255, 255, 255, 0.9)";
+    for (const d of icon) {
+      context.stroke(new Path2D(d));
+    }
+    context.lineWidth = 2.4;
+    context.strokeStyle = primary;
+    for (const d of icon) {
+      context.stroke(new Path2D(d));
+    }
+    context.restore();
+  }
+  context.restore();
 }
 
 function textSize(viewWidth: number): number {
@@ -926,16 +1302,20 @@ function drawMark(
     return;
   }
   if (mark.tool === "text") {
-    const size = textSize(view.w);
-    const x = view.x + mark.x * view.w;
-    const y = view.y + mark.y * view.h;
+    const size = textSize(view.w) * (mark.size ?? 1);
     context.font = `600 ${size}px sans-serif`;
+    const width = context.measureText(mark.text).width;
+    context.save();
+    // rotate around the centre of the text box
+    context.translate(view.x + mark.x * view.w + width / 2, view.y + mark.y * view.h - size / 2);
+    context.rotate(mark.rotation ?? 0);
     context.lineJoin = "round";
     context.lineWidth = Math.max(3, size * 0.16);
     context.strokeStyle = haloColor(mark.color);
-    context.strokeText(mark.text, x, y);
+    context.strokeText(mark.text, -width / 2, size / 2);
     context.fillStyle = mark.color;
-    context.fillText(mark.text, x, y);
+    context.fillText(mark.text, -width / 2, size / 2);
+    context.restore();
     return;
   }
   const sx = mark.x * image.naturalWidth;
