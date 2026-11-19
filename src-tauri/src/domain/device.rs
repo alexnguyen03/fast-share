@@ -21,6 +21,14 @@ pub struct PhoneRecord {
     pub poll_token: Option<String>,
 }
 
+pub fn text_notification_body(phone_name: &str, copied: bool) -> String {
+    if copied {
+        format!("Text from {phone_name}. Copied, ready to paste.")
+    } else {
+        format!("Text from {phone_name}.")
+    }
+}
+
 pub fn notification_body(phone_name: &str, count: usize) -> String {
     if count == 1 {
         format!("1 image from {phone_name}. Copied, ready to paste.")

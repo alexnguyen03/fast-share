@@ -5,12 +5,15 @@ use serde::Serialize;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::adapters::phone_client::{self, remembered_qr};
-use crate::domain::{BatchId, DeviceId, DeviceTrust, HostError, ImageId, PcId, MAX_IMAGE_BYTES};
-use crate::ports::Store;
+use crate::domain::{
+    validate_text, BatchId, DeviceId, DeviceTrust, HostError, ImageId, PcId, QrPayload, TextId,
+    MAX_IMAGE_BYTES,
+};
+use crate::ports::{Clipboard, Store};
 use crate::runtime::{qr_png, DockEdge, SharedHost, WindowPrefs};
 use crate::use_cases::{
-    accept_device, copy_image, delete_all, delete_image, forget_device, reject_device, toggle_pin,
-    update_settings,
+    accept_device, copy_image, delete_all, delete_image, delete_text, forget_device, reject_device,
+    toggle_pin, update_settings,
 };
 use tauri::Emitter;
 
@@ -76,12 +79,23 @@ pub(crate) struct ImageView {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct TextView {
+    id: String,
+    /// First characters only; the full text is copied by `copy_history_text`.
+    preview: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct BatchView {
     id: String,
     phone_name: String,
     received_at: String,
     images: Vec<ImageView>,
+    texts: Vec<TextView>,
 }
+
+const TEXT_PREVIEW_CHARS: usize = 600;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -587,14 +601,49 @@ pub(crate) fn list_history(state: tauri::State<'_, SharedHost>) -> Result<Vec<Ba
                 pinned: image.pinned,
             })
             .collect();
+        let texts = batch
+            .texts
+            .into_iter()
+            .map(|text| TextView {
+                id: text.id.as_str().to_string(),
+                preview: text.text.chars().take(TEXT_PREVIEW_CHARS).collect(),
+            })
+            .collect();
         views.push(BatchView {
             id: batch.id.as_str().to_string(),
             phone_name: batch.phone_name,
             received_at: batch.received_at.to_rfc3339(),
             images,
+            texts,
         });
     }
     Ok(views)
+}
+
+#[tauri::command]
+pub(crate) fn copy_history_text(
+    state: tauri::State<'_, SharedHost>,
+    text_id: String,
+) -> Result<(), String> {
+    let host = state.lock().map_err(text_err)?;
+    let id = TextId::parse(text_id).map_err(text_err)?;
+    let batches = host.store.list_batches().map_err(text_err)?;
+    let text = batches
+        .iter()
+        .flat_map(|batch| batch.texts.iter())
+        .find(|text| text.id == id)
+        .ok_or_else(|| HostError::NotFound.to_string())?;
+    host.clipboard.write_text(&text.text).map_err(text_err)
+}
+
+#[tauri::command]
+pub(crate) fn delete_history_text(
+    state: tauri::State<'_, SharedHost>,
+    text_id: String,
+) -> Result<(), String> {
+    let mut host = state.lock().map_err(text_err)?;
+    let id = TextId::parse(text_id).map_err(text_err)?;
+    delete_text(&mut host.store, &id).map_err(text_err)
 }
 
 #[tauri::command]
@@ -1075,12 +1124,43 @@ pub(crate) async fn send_batch(
         cleaned.push(trimmed.to_string());
     }
     let id = PcId::parse(pc_id).map_err(text_err)?;
+    let (batch, images) = (&parsed_batch_id, &cleaned);
+    deliver_to_pc(&state, &id, move |qr, device_id, secret| async move {
+        phone_client::send_batch(&qr, &device_id, &secret, batch, images).await
+    })
+    .await
+}
+
+#[tauri::command]
+pub(crate) async fn send_text(
+    state: tauri::State<'_, SharedHost>,
+    pc_id: String,
+    batch_id: String,
+    text: String,
+) -> Result<(), String> {
+    validate_text(&text).map_err(text_err)?;
+    let parsed_batch_id = BatchId::parse(batch_id).map_err(text_err)?;
+    let id = PcId::parse(pc_id).map_err(text_err)?;
+    let (batch, body) = (&parsed_batch_id, &text);
+    deliver_to_pc(&state, &id, move |qr, device_id, secret| async move {
+        phone_client::send_text(&qr, &device_id, &secret, batch, body).await
+    })
+    .await
+}
+
+/// Looks up the paired computer and runs `send`. On a network failure it re-browses mDNS once
+/// (the computer's IP may have changed) and retries with the updated address.
+async fn deliver_to_pc<F, Fut>(state: &SharedHost, id: &PcId, send: F) -> Result<(), String>
+where
+    F: Fn(QrPayload, DeviceId, String) -> Fut,
+    Fut: std::future::Future<Output = Result<(), HostError>>,
+{
     let (device_id, secret, qr) = {
         let host = state.lock().map_err(text_err)?;
         let pc = host
             .known_pcs
             .iter()
-            .find(|pc| pc.pc_id == id)
+            .find(|pc| &pc.pc_id == id)
             .ok_or_else(|| HostError::NotFound.to_string())?;
         let secret = pc
             .secret
@@ -1097,7 +1177,7 @@ pub(crate) async fn send_batch(
         (host.phone.device_id.clone(), secret, qr)
     };
 
-    match phone_client::send_batch(&qr, &device_id, &secret, &parsed_batch_id, &cleaned).await {
+    match send(qr, device_id.clone(), secret.clone()).await {
         Ok(()) => Ok(()),
         Err(
             first_err @ (HostError::Unreachable
@@ -1118,7 +1198,7 @@ pub(crate) async fn send_batch(
                 let pc = host
                     .known_pcs
                     .iter()
-                    .find(|pc| pc.pc_id == id)
+                    .find(|pc| &pc.pc_id == id)
                     .ok_or_else(|| HostError::NotFound.to_string())?;
                 remembered_qr(
                     &pc.pc_id,
@@ -1129,9 +1209,7 @@ pub(crate) async fn send_batch(
                     &pc.cert_der,
                 )
             };
-            phone_client::send_batch(&updated_qr, &device_id, &secret, &parsed_batch_id, &cleaned)
-                .await
-                .map_err(text_err)
+            send(updated_qr, device_id, secret).await.map_err(text_err)
         }
         Err(other_err) => Err(other_err.to_string()),
     }
@@ -1180,6 +1258,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         list_history,
         get_history_image,
         copy_history_image,
+        copy_history_text,
+        delete_history_text,
         open_history_image,
         reveal_history_image,
         copy_history_image_path,
@@ -1200,6 +1280,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         poll_pair,
         discover_destinations,
         send_batch,
+        send_text,
         take_shared_images,
     ]
 }

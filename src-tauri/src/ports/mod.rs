@@ -10,4 +10,4 @@ pub use clock::{Clock, FixedClock, SystemClock};
 #[allow(unused_imports)]
 pub use notifier::{Notice, Notifier, RecordingNotifier};
 #[allow(unused_imports)]
-pub use store::{HistoryBatch, ImageRecord, MemoryStore, Store};
+pub use store::{HistoryBatch, ImageRecord, MemoryStore, Store, TextRecord};

@@ -86,6 +86,8 @@ declare global {
       openAccessibilitySettings(): void;
       openAppInfo(): void;
       openAutostart(): void;
+      readClipboardText(): string;
+      takeClipboardRequest(): boolean;
     };
   }
 }

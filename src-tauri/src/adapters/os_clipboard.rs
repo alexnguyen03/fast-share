@@ -51,4 +51,23 @@ impl Clipboard for OsClipboard {
             ))
         }
     }
+
+    fn write_text(&self, text: &str) -> Result<(), HostError> {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            let mut clipboard =
+                arboard::Clipboard::new().map_err(|error| HostError::Storage(error.to_string()))?;
+            clipboard
+                .set_text(text)
+                .map_err(|error| HostError::Storage(error.to_string()))?;
+            return Ok(());
+        }
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            let _ = text;
+            Err(HostError::Storage(
+                "text clipboard is written on the computer".into(),
+            ))
+        }
+    }
 }

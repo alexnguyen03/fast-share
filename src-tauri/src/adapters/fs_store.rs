@@ -204,6 +204,7 @@ mod tests {
                     file_name: file_name.clone(),
                     pinned: false,
                 }],
+                texts: Vec::new(),
             })
             .unwrap();
         std::fs::write(

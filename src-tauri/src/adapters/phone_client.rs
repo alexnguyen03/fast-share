@@ -233,6 +233,34 @@ pub async fn send_batch(
     }
 }
 
+pub async fn send_text(
+    qr: &QrPayload,
+    device_id: &DeviceId,
+    secret: &str,
+    batch_id: &BatchId,
+    text: &str,
+) -> Result<(), HostError> {
+    let client = pinned_client(qr, UPLOAD_TIMEOUT)?;
+    let response = client
+        .post(format!("https://{}:{}/texts", qr.host, qr.port))
+        .json(&serde_json::json!({
+            "deviceId": device_id.as_str(),
+            "secret": secret,
+            "batchId": batch_id.as_str(),
+            "text": text,
+        }))
+        .send()
+        .await
+        .map_err(|error| connection_error(&qr.host, qr.port, &error))?;
+    match response.status().as_u16() {
+        200..=299 => Ok(()),
+        403 => Err(HostError::NotTrusted),
+        413 => Err(HostError::TextTooLarge),
+        400 => Err(HostError::InvalidText),
+        _ => Err(HostError::Unreachable),
+    }
+}
+
 pub async fn ready(qr: &QrPayload) -> bool {
     let Ok(client) = pinned_client(qr, READY_TIMEOUT) else {
         return false;

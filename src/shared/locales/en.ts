@@ -141,6 +141,11 @@ export const en = {
   pasteReady: "Paste is ready on the computer",
   didNotReceive: (name: string) =>
     `${name} did not receive the images. Try again.`,
+  sendClipboard: "Send clipboard text",
+  clipboardPlaceholder: "Clipboard is empty. Paste or type text here.",
+  sendText: "Send",
+  textSent: (name: string) => `Text sent to ${name}`,
+  didNotReceiveText: (name: string) => `${name} did not receive the text. Try again.`,
   retry: "Retry",
   offline:
     "The computer is offline. Open Fast Share on it and check that both devices are on the same Wi-Fi.",

@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 
-use crate::domain::{HostError, ImageId};
+use crate::domain::{HostError, ImageId, TextId};
 use crate::ports::Store;
 
 pub fn purge_expired(
@@ -25,6 +25,7 @@ pub fn purge_expired(
             }
             if !pinned_images.is_empty() {
                 batch.images = pinned_images;
+                batch.texts.clear();
                 kept.push(batch);
             }
             continue;
@@ -74,7 +75,8 @@ pub fn delete_image(store: &mut impl Store, image_id: &ImageId) -> Result<(), Ho
         if batch.images.len() != before {
             found = true;
         }
-        if !batch.images.is_empty() {
+        // A text-only batch has no images; only drop batches with nothing left.
+        if !batch.images.is_empty() || !batch.texts.is_empty() {
             kept.push(batch);
         }
     }
@@ -82,6 +84,22 @@ pub fn delete_image(store: &mut impl Store, image_id: &ImageId) -> Result<(), Ho
         return Err(HostError::NotFound);
     }
     store.save_batches(kept)?;
+    Ok(())
+}
+
+pub fn delete_text(store: &mut impl Store, text_id: &TextId) -> Result<(), HostError> {
+    let mut batches = store.list_batches()?;
+    let mut found = false;
+    for batch in &mut batches {
+        let count = batch.texts.len();
+        batch.texts.retain(|text| &text.id != text_id);
+        found |= batch.texts.len() != count;
+    }
+    if !found {
+        return Err(HostError::NotFound);
+    }
+    batches.retain(|batch| !batch.images.is_empty() || !batch.texts.is_empty());
+    store.save_batches(batches)?;
     Ok(())
 }
 

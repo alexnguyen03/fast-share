@@ -1,6 +1,8 @@
 package com.alexnguyen03.fastshare
 
 import android.Manifest
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
@@ -24,11 +26,14 @@ class MainActivity : TauriActivity() {
   private val ioExecutor = Executors.newSingleThreadExecutor()
   private val mainHandler = Handler(Looper.getMainLooper())
   private var webViewRef: WebView? = null
+  // Set by the edge panel's "Send clipboard"; the page takes it when it mounts (cold start) or on the event (warm).
+  @Volatile private var clipboardRequested = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     currentInstance = this
+    clipboardRequested = intent?.action == ACTION_SEND_CLIPBOARD
     applySystemBars(true, "#FBFDF8")
     ensurePermissionsAndStartService()
     ioExecutor.execute {
@@ -94,6 +99,22 @@ class MainActivity : TauriActivity() {
     }
 
     // Xiaomi/HyperOS: without Autostart the system cannot rebind the service after the app is swiped away.
+    // Android 10+ only lets the focused app read the clipboard; the page calls this from the foreground.
+    @JavascriptInterface
+    fun readClipboardText(): String {
+      val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+      val clip = clipboard.primaryClip ?: return ""
+      if (clip.itemCount == 0) return ""
+      return clip.getItemAt(0).coerceToText(this@MainActivity)?.toString() ?: ""
+    }
+
+    @JavascriptInterface
+    fun takeClipboardRequest(): Boolean {
+      val requested = clipboardRequested
+      clipboardRequested = false
+      return requested
+    }
+
     @JavascriptInterface
     fun openAutostart() {
       val miui = Intent().setClassName(
@@ -148,6 +169,17 @@ class MainActivity : TauriActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
+    if (intent.action == ACTION_SEND_CLIPBOARD) {
+      clipboardRequested = true
+      // Wait a moment so the window has focus: the clipboard is unreadable before that.
+      mainHandler.postDelayed({
+        webViewRef?.evaluateJavascript(
+          "window.dispatchEvent(new CustomEvent('fast-share-clipboard'))",
+          null
+        )
+      }, 300)
+      return
+    }
     if (intent.action == ACTION_OPEN_INBOX) {
       externalInboxReady = false
       mainHandler.postDelayed({
@@ -250,6 +282,7 @@ class MainActivity : TauriActivity() {
 
   companion object {
     const val ACTION_OPEN_INBOX = "com.alexnguyen03.fastshare.OPEN_INBOX"
+    const val ACTION_SEND_CLIPBOARD = "com.alexnguyen03.fastshare.SEND_CLIPBOARD"
     @Volatile var externalInboxReady: Boolean = false
     @Volatile var isForeground: Boolean = false
     @Volatile var currentInstance: MainActivity? = null

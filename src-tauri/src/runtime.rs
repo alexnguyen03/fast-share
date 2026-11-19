@@ -14,8 +14,8 @@ use crate::adapters::{lan_ipv4, FsStore, HostCert, OsClipboard, OsNotifier};
 use crate::domain::{BatchId, DeviceId, HostError, PcId, QrPayload};
 use crate::ports::{Clock, Store, SystemClock};
 use crate::use_cases::{
-    authorize_batch, commit_validated_batch, decode_batch_images, issue_ticket, pair_status,
-    submit_pair, submit_pair_code, PairOutcome, PairingTicket,
+    authorize_batch, commit_validated_batch, decode_batch_images, ingest_text, issue_ticket,
+    pair_status, submit_pair, submit_pair_code, PairOutcome, PairingTicket,
 };
 
 fn host_ports() -> std::ops::RangeInclusive<u16> {
@@ -299,6 +299,11 @@ fn spawn_server(shared: SharedHost, cert: HostCert, listener: std::net::TcpListe
                 .route("/pair/code", post(pair_code))
                 .route("/pair/status", post(status))
                 .route("/batches", post(batches))
+                // Inner limit wins over the global one below: text is capped far lower than images.
+                .route(
+                    "/texts",
+                    post(texts).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
+                )
                 .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
                 .with_state(shared);
             if let Err(error) = axum_server::from_tcp_rustls(listener, config)
@@ -478,6 +483,37 @@ async fn batches(
     ))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TextBody {
+    device_id: String,
+    secret: String,
+    batch_id: String,
+    text: String,
+}
+
+async fn texts(
+    State(shared): State<SharedHost>,
+    Json(body): Json<TextBody>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let device_id = DeviceId::parse(body.device_id).map_err(error_status)?;
+    let batch_id = BatchId::parse(&body.batch_id).map_err(error_status)?;
+    let mut host = shared.lock().map_err(storage_status)?;
+    let host = &mut *host;
+    ingest_text(
+        &mut host.store,
+        &host.clipboard,
+        &host.notifier,
+        &device_id,
+        &body.secret,
+        batch_id,
+        &body.text,
+        Utc::now(),
+    )
+    .map_err(error_status)?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
 fn view_outcome(outcome: PairOutcome) -> PairView {
     match outcome {
         PairOutcome::Pending { poll_token } => PairView {
@@ -504,10 +540,11 @@ fn error_status(error: HostError) -> (StatusCode, String) {
             StatusCode::FORBIDDEN
         }
         HostError::PairingExpired => StatusCode::GONE,
-        HostError::ImageTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-        HostError::ImageUndecodable | HostError::InvalidId | HostError::InvalidName => {
-            StatusCode::BAD_REQUEST
-        }
+        HostError::ImageTooLarge | HostError::TextTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+        HostError::ImageUndecodable
+        | HostError::InvalidId
+        | HostError::InvalidName
+        | HostError::InvalidText => StatusCode::BAD_REQUEST,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (status, error.to_string())

@@ -42,11 +42,18 @@ export type HistoryImage = {
   pinned?: boolean;
 };
 
+export type HistoryText = {
+  id: string;
+  /** First characters only; copying uses the full text on the computer. */
+  preview: string;
+};
+
 export type HistoryBatch = {
   id: string;
   phoneName: string;
   receivedAt: string;
   images: HistoryImage[];
+  texts: HistoryText[];
 };
 
 export type Destination = {
@@ -167,12 +174,21 @@ async function ensurePreview(): Promise<void> {
       phoneName: "Work iPhone",
       receivedAt: new Date().toISOString(),
       images: [{ id: "image-a" }, { id: "image-b" }],
+      texts: [],
+    },
+    {
+      id: "batch-text",
+      phoneName: "Work iPhone",
+      receivedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      images: [],
+      texts: [{ id: "text-a", preview: "https://example.com/a-link-copied-on-the-phone" }],
     },
     {
       id: "batch-old",
       phoneName: "Work iPhone",
       receivedAt: new Date(Date.now() - 86_400_000).toISOString(),
       images: [{ id: "image-c" }],
+      texts: [],
     },
   ];
 }
@@ -403,10 +419,30 @@ export const api = {
           ...batch,
           images: batch.images.filter((image) => image.id !== imageId),
         }))
-        .filter((batch) => batch.images.length > 0);
+        .filter((batch) => batch.images.length > 0 || batch.texts.length > 0);
       return Promise.resolve();
     }
     return invoke("delete_history_image", { imageId });
+  },
+
+  copyHistoryText(textId: string): Promise<void> {
+    if (!inTauri()) {
+      return Promise.resolve();
+    }
+    return invoke("copy_history_text", { textId });
+  },
+
+  deleteHistoryText(textId: string): Promise<void> {
+    if (!inTauri()) {
+      preview.history = preview.history
+        .map((batch) => ({
+          ...batch,
+          texts: batch.texts.filter((text) => text.id !== textId),
+        }))
+        .filter((batch) => batch.images.length > 0 || batch.texts.length > 0);
+      return Promise.resolve();
+    }
+    return invoke("delete_history_text", { textId });
   },
 
   deleteHistory(): Promise<void> {
@@ -522,6 +558,16 @@ export const api = {
       return Promise.resolve();
     }
     return invoke("send_batch", { pcId, batchId, images });
+  },
+
+  sendText(pcId: string, batchId: string, text: string): Promise<void> {
+    if (!inTauri()) {
+      if (!preview.destinations.some((pc) => pc.pcId === pcId && pc.online)) {
+        return Promise.reject(new Error(en.offline));
+      }
+      return Promise.resolve();
+    }
+    return invoke("send_text", { pcId, batchId, text });
   },
 
   async onHistoryFocus(refresh: (batchId?: string) => void): Promise<() => void> {

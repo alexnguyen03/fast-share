@@ -22,6 +22,7 @@ class CapturePanel(
   private val service: AccessibilityService,
   private val onCapture: () -> Unit,
   private val onLatest: () -> Unit,
+  private val onSendClipboard: () -> Unit,
   private val onOpenApp: () -> Unit,
 ) {
   private val wm = service.getSystemService(AccessibilityService.WINDOW_SERVICE) as WindowManager
@@ -55,6 +56,7 @@ class CapturePanel(
       root.addView(item(palette, R.drawable.ic_camera, R.string.panel_capture, onCapture))
       root.addView(item(palette, R.drawable.ic_image, R.string.panel_latest, onLatest))
     }
+    root.addView(item(palette, R.drawable.ic_clipboard, R.string.panel_send_clipboard, onSendClipboard))
     root.addView(item(palette, R.drawable.ic_smartphone, R.string.panel_open_app, onOpenApp))
     root.setOnTouchListener { _, _ ->
       restartTimer()

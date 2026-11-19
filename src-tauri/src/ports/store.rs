@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::domain::{BatchId, DeviceId, HostError, ImageId, PhoneRecord, Settings};
+use crate::domain::{BatchId, DeviceId, HostError, ImageId, PhoneRecord, Settings, TextId};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,12 +13,22 @@ pub struct ImageRecord {
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TextRecord {
+    pub id: TextId,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HistoryBatch {
     pub id: BatchId,
     pub phone_id: DeviceId,
     pub phone_name: String,
     pub received_at: DateTime<Utc>,
     pub images: Vec<ImageRecord>,
+    // Absent in history written before text sharing existed.
+    #[serde(default)]
+    pub texts: Vec<TextRecord>,
 }
 
 pub trait Store: Send {

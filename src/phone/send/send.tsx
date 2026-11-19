@@ -2,7 +2,9 @@ import * as React from "react";
 import {
   ArrowUpFromLine,
   ChevronLeft,
+  ClipboardPaste,
   Laptop,
+  Loader2,
   X,
 } from "lucide-react";
 import { api, type Destination } from "../../shared/commands";
@@ -52,6 +54,28 @@ let pendingDrafts: Draft[] | null = null;
 let restored = false;
 let resumeOnce = false;
 
+// Android's edge panel opens the app with this event; the clipboard can only be read once the app is in front.
+const CLIPBOARD_EVENT = "fast-share-clipboard";
+let clipboardRequested = false;
+
+async function readClipboard(): Promise<string> {
+  try {
+    const bridge = window.__FAST_SHARE_ANDROID__;
+    if (bridge) {
+      return bridge.readClipboardText();
+    }
+    return await navigator.clipboard.readText();
+  } catch {
+    return ""; // denied or unsupported: the preview opens empty so the user can paste by hand
+  }
+}
+
+function newTextBatchId(): string {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `text-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function keepDrafts(drafts: Draft[]): void {
   pendingDrafts = drafts.length > 0 ? drafts : null;
   saveDrafts(drafts);
@@ -84,9 +108,19 @@ export async function mountPhone(
     window.addEventListener("fast-share-inbox", () => {
       void consumeInbox(root, true, initialTab);
     });
+    window.addEventListener(CLIPBOARD_EVENT, () => {
+      // Make sure the Send screen is showing; it opens the preview from this flag or the event itself.
+      window.__FAST_SHARE_ANDROID__?.takeClipboardRequest();
+      clipboardRequested = true;
+      void mountPhone(root, "send");
+    });
     window.addEventListener("visibilitychange", refreshInbox);
     window.addEventListener("focus", refreshInbox);
     window.setInterval(refreshInbox, 2500);
+  }
+  // Cold start: the panel launched the app before this page could hear the event.
+  if (window.__FAST_SHARE_ANDROID__?.takeClipboardRequest()) {
+    clipboardRequested = true;
   }
   await consumeInbox(root, false, initialTab);
 }
@@ -132,6 +166,54 @@ function PhoneSendScreen({
   );
   const [discardOpen, setDiscardOpen] = React.useState<boolean>(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  // null = clipboard card closed; a string (possibly empty) = preview open.
+  const [clip, setClip] = React.useState<string | null>(null);
+  const [clipSending, setClipSending] = React.useState<boolean>(false);
+  const [clipError, setClipError] = React.useState<string>("");
+  const clipBatchRef = React.useRef<string | null>(null);
+
+  const openClipboard = React.useCallback(async () => {
+    clipboardRequested = false;
+    clipBatchRef.current = null;
+    setClipError("");
+    let text = await readClipboard();
+    if (!text) {
+      // Right after the app comes to the front Android may not have given it focus yet.
+      await new Promise((resolve) => window.setTimeout(resolve, 400));
+      text = await readClipboard();
+    }
+    setClip(text);
+  }, []);
+
+  React.useEffect(() => {
+    if (clipboardRequested) {
+      void openClipboard();
+    }
+    const onRequest = () => void openClipboard();
+    window.addEventListener(CLIPBOARD_EVENT, onRequest);
+    return () => window.removeEventListener(CLIPBOARD_EVENT, onRequest);
+  }, [openClipboard]);
+
+  const sendClipboardText = async (): Promise<void> => {
+    if (!currentPc || clip === null) {
+      return;
+    }
+    const batchId = clipBatchRef.current ?? newTextBatchId();
+    clipBatchRef.current = batchId; // a retry of the same text reuses it, so the computer never stores it twice
+    setClipSending(true);
+    setClipError("");
+    try {
+      await api.sendText(currentPc.pcId, batchId, clip);
+      showToast(en.textSent(currentPc.name));
+      buzzIfEnabled();
+      clipBatchRef.current = null;
+      setClip(null);
+    } catch (error) {
+      setClipError(errorText(error) || en.didNotReceiveText(currentPc.name));
+    } finally {
+      setClipSending(false);
+    }
+  };
 
   React.useEffect(() => {
     let cancelled = false;
@@ -259,6 +341,63 @@ function PhoneSendScreen({
                 </span>
               </div>
             </Card>
+
+            {clip === null ? (
+              <Button
+                type="button"
+                variant="secondary"
+                size="lg"
+                className="gap-2 rounded-2xl"
+                onClick={() => void openClipboard()}
+              >
+                <ClipboardPaste className="h-4 w-4" />
+                {en.sendClipboard}
+              </Button>
+            ) : (
+              <Card className="flex flex-col gap-2.5 rounded-2xl border-0 bg-muted p-3 shadow-none">
+                <textarea
+                  value={clip}
+                  rows={5}
+                  placeholder={en.clipboardPlaceholder}
+                  aria-label={en.sendClipboard}
+                  onChange={(event) => {
+                    clipBatchRef.current = null; // edited text is a new message
+                    setClip(event.target.value);
+                  }}
+                  className="w-full resize-none rounded-xl border-0 bg-background p-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                />
+                {clipError ? (
+                  <p className="m-0 text-xs text-destructive">{clipError}</p>
+                ) : null}
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={clipSending}
+                    onClick={() => {
+                      clipBatchRef.current = null;
+                      setClip(null);
+                      setClipError("");
+                    }}
+                  >
+                    {en.cancel}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={clipSending || clip.trim().length === 0}
+                    onClick={() => void sendClipboardText()}
+                  >
+                    {clipSending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      en.sendText
+                    )}
+                  </Button>
+                </div>
+              </Card>
+            )}
 
             {currentPc ? (
               <div className="flex flex-col gap-1.5">

@@ -77,7 +77,7 @@ class FastShareOverlayService : AccessibilityService() {
     mainHandler.post {
       removeUi()
       if (!OverlayPrefs.enabled(this)) return@post
-      val p = CapturePanel(this, ::captureNow, ::sendLatest, ::openApp)
+      val p = CapturePanel(this, ::captureNow, ::sendLatest, ::sendClipboard, ::openApp)
       panel = p
       handle = EdgeHandle(this) { p.show(it) }.also { it.show() }
       evaluate()
@@ -145,6 +145,20 @@ class FastShareOverlayService : AccessibilityService() {
 
   private fun sendLatest() {
     FastShareCaptureService.instance?.sendLatest()
+  }
+
+  // The clipboard is unreadable from here (Android 10+): bring the app up and let it read.
+  private fun sendClipboard() {
+    startActivity(
+      Intent(this, MainActivity::class.java).apply {
+        action = MainActivity.ACTION_SEND_CLIPBOARD
+        addFlags(
+          Intent.FLAG_ACTIVITY_NEW_TASK or
+            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+            Intent.FLAG_ACTIVITY_SINGLE_TOP,
+        )
+      },
+    )
   }
 
   private fun openApp() {

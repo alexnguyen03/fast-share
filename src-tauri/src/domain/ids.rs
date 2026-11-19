@@ -42,3 +42,4 @@ id_type!(DeviceId);
 id_type!(PcId);
 id_type!(BatchId);
 id_type!(ImageId);
+id_type!(TextId);

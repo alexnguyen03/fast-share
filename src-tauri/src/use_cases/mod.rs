@@ -1,6 +1,7 @@
 mod accept_device;
 mod copy_image;
 mod ingest_batch;
+mod ingest_text;
 mod purge_history;
 mod update_settings;
 
@@ -12,7 +13,8 @@ pub use copy_image::copy_image;
 #[cfg(test)]
 pub use ingest_batch::ingest_batch;
 pub use ingest_batch::{authorize_batch, commit_validated_batch, decode_batch_images};
-pub use purge_history::{delete_all, delete_image, purge_expired, toggle_pin};
+pub use ingest_text::ingest_text;
+pub use purge_history::{delete_all, delete_image, delete_text, purge_expired, toggle_pin};
 pub use update_settings::update_settings;
 
 #[cfg(test)]
@@ -534,5 +536,152 @@ mod tests {
         assert!(!toggle_pin(&mut store, &first_id).unwrap());
         delete_all(&mut store).unwrap();
         assert!(store.list_batches().unwrap().is_empty());
+    }
+
+    fn send_text(
+        store: &mut MemoryStore,
+        clipboard: &RecordingClipboard,
+        notifier: &RecordingNotifier,
+        device_id: &DeviceId,
+        secret: &str,
+        batch_id: crate::domain::BatchId,
+        text: &str,
+    ) -> Result<(), HostError> {
+        ingest_text(store, clipboard, notifier, device_id, secret, batch_id, text, now())
+    }
+
+    #[test]
+    fn text_is_stored_copied_and_notified() {
+        let mut store = MemoryStore::new();
+        let (device_id, secret) = trust_phone(&mut store);
+        let clipboard = RecordingClipboard::new();
+        let notifier = RecordingNotifier::new();
+        let batch_id = crate::domain::BatchId::generate();
+        send_text(&mut store, &clipboard, &notifier, &device_id, &secret, batch_id.clone(), "hello")
+            .unwrap();
+        // Same batch id again: no second copy, no second notice.
+        send_text(&mut store, &clipboard, &notifier, &device_id, &secret, batch_id, "hello")
+            .unwrap();
+        let batches = store.list_batches().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].texts[0].text, "hello");
+        assert_eq!(clipboard.text_count(), 1);
+        assert_eq!(notifier.bodies().len(), 1);
+    }
+
+    #[test]
+    fn text_rejects_bad_input_and_untrusted_senders() {
+        let mut store = MemoryStore::new();
+        let (device_id, secret) = trust_phone(&mut store);
+        let clipboard = RecordingClipboard::new();
+        let notifier = RecordingNotifier::new();
+        let id = || crate::domain::BatchId::generate();
+        assert_eq!(
+            send_text(&mut store, &clipboard, &notifier, &device_id, "wrong", id(), "hi"),
+            Err(HostError::NotTrusted)
+        );
+        assert_eq!(
+            send_text(&mut store, &clipboard, &notifier, &device_id, &secret, id(), "   "),
+            Err(HostError::InvalidText)
+        );
+        assert!(store.list_batches().unwrap().is_empty());
+        assert_eq!(clipboard.text_count(), 0);
+    }
+
+    #[test]
+    fn auto_copy_off_still_stores_text() {
+        let mut store = MemoryStore::new();
+        store.settings.auto_copy_to_clipboard = false;
+        let (device_id, secret) = trust_phone(&mut store);
+        let clipboard = RecordingClipboard::new();
+        let notifier = RecordingNotifier::new();
+        send_text(
+            &mut store,
+            &clipboard,
+            &notifier,
+            &device_id,
+            &secret,
+            crate::domain::BatchId::generate(),
+            "hello",
+        )
+        .unwrap();
+        assert_eq!(clipboard.text_count(), 0);
+        assert_eq!(store.list_batches().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn text_only_batches_survive_image_deletes_and_expire_with_retention() {
+        let mut store = MemoryStore::new();
+        let (device_id, secret) = trust_phone(&mut store);
+        let clipboard = RecordingClipboard::new();
+        let notifier = RecordingNotifier::new();
+        send_text(
+            &mut store,
+            &clipboard,
+            &notifier,
+            &device_id,
+            &secret,
+            crate::domain::BatchId::generate(),
+            "keep me",
+        )
+        .unwrap();
+        ingest_batch(
+            &mut store,
+            &clipboard,
+            &notifier,
+            &device_id,
+            &secret,
+            crate::domain::BatchId::generate(),
+            &[tiny_png()],
+            now(),
+        )
+        .unwrap();
+        let image_id = store
+            .list_batches()
+            .unwrap()
+            .iter()
+            .find_map(|batch| batch.images.first().map(|image| image.id.clone()))
+            .unwrap();
+        delete_image(&mut store, &image_id).unwrap();
+        let batches = store.list_batches().unwrap();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].texts[0].text, "keep me");
+
+        let text_id = batches[0].texts[0].id.clone();
+        purge_expired(&mut store, now() + chrono::Duration::days(8), 7).unwrap();
+        assert!(store.list_batches().unwrap().is_empty());
+        assert_eq!(delete_text(&mut store, &text_id), Err(HostError::NotFound));
+    }
+
+    #[test]
+    fn delete_text_removes_only_that_text() {
+        let mut store = MemoryStore::new();
+        let (device_id, secret) = trust_phone(&mut store);
+        let clipboard = RecordingClipboard::new();
+        let notifier = RecordingNotifier::new();
+        for text in ["one", "two"] {
+            send_text(
+                &mut store,
+                &clipboard,
+                &notifier,
+                &device_id,
+                &secret,
+                crate::domain::BatchId::generate(),
+                text,
+            )
+            .unwrap();
+        }
+        let first = store.list_batches().unwrap()[0].texts[0].id.clone();
+        delete_text(&mut store, &first).unwrap();
+        let rest = store.list_batches().unwrap();
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].texts[0].text, "two");
+    }
+
+    #[test]
+    fn history_written_before_text_sharing_still_loads() {
+        let old = r#"[{"id":"batch-12345678","phoneId":"phone-12345678","phoneName":"P","receivedAt":"2026-10-06T12:00:00Z","images":[]}]"#;
+        let batches: Vec<crate::ports::HistoryBatch> = serde_json::from_str(old).unwrap();
+        assert!(batches[0].texts.is_empty());
     }
 }

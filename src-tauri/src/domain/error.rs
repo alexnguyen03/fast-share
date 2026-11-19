@@ -15,6 +15,10 @@ pub enum HostError {
     ImageTooLarge,
     #[error("image could not be decoded")]
     ImageUndecodable,
+    #[error("text is too large")]
+    TextTooLarge,
+    #[error("text is empty or invalid")]
+    InvalidText,
     #[error("retention must be 1 through 90")]
     InvalidRetention,
     #[error("display name is empty")]

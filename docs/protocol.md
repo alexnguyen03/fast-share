@@ -46,6 +46,10 @@ The upload is `POST /batches` on the pinned HTTPS port. The TLS client verifies 
 
 There is no client filename. The computer checks `deviceId`, `secret`, and the image count before decoding base64 or holding the store lock during image decoding. It accepts the batch only when the phone is trusted, the secret matches, the batch has at most 20 images, every image is at most 20 MiB, neither dimension exceeds 8192, and every image decodes. A repeated upload with the same `deviceId` and `batchId` is a no-op that returns `{ "ok": true, "imageCount": N }` without storing duplicates, overwriting the clipboard, or sending another notification. For a new batch, it validates the whole batch before writing any file, re-encodes each image as PNG, and names the file `image-{imageId}.png`. The HTTP body is limited to 100 MiB. The response is `{ "ok": true, "imageCount": N }`.
 
+## Send text
+
+The phone can also send plain text (for example the clipboard) with `POST /texts` on the same pinned HTTPS port. The JSON body is `{ deviceId, secret, batchId, text }`. The computer checks the phone is trusted and the secret matches, then requires `text` to contain something other than whitespace and no NUL character, and to be at most 1 MiB; the HTTP body for this route is limited to 2 MiB. A repeated `deviceId` and `batchId` is a no-op. A new text is stored in the history (inline in `history.json`, as `texts` on the batch), copied to the computer clipboard when `autoCopyToClipboard` is on, and announced with a notification. Failing to write the clipboard never loses the text. The response is `{ "ok": true }`. Errors: 403 not trusted, 400 empty or invalid text, 413 too large. Text is not pinnable and expires with the retention window like images. A computer that predates this route answers 404, which the phone reports as unreachable.
+
 `GET /ready` answers `{ "ok": true }` so a remembered phone can see that the app is open. It carries no token and no image.
 
 If the computer app is closed, asleep, or not on the same Wi-Fi, the send fails on the phone and can be retried. The phone does not keep a silent queue.

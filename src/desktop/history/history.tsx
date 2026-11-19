@@ -170,6 +170,58 @@ function flattenAndGroup(
   return { flat, groups };
 }
 
+type TextItem = {
+  id: string;
+  preview: string;
+  phoneName: string;
+  receivedAt: string;
+};
+
+function TextCard({
+  item,
+  justCopied,
+  onCopy,
+  onDelete,
+}: {
+  item: TextItem;
+  justCopied: boolean;
+  onCopy: () => void;
+  onDelete: () => void;
+}): React.JSX.Element {
+  return (
+    <Card className="flex flex-col gap-2 rounded-2xl border-0 bg-muted p-3">
+      <p className="m-0 line-clamp-4 whitespace-pre-wrap wrap-break-word text-sm text-foreground">
+        {item.preview}
+      </p>
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate text-xs text-muted-foreground">
+          {item.phoneName} · {relativeTime(item.receivedAt)}
+        </span>
+        <div className="flex shrink-0 gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={en.copy}
+            onClick={onCopy}
+          >
+            {justCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={en.delete}
+            onClick={onDelete}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function LightboxModal({
   item,
   hasPrev,
@@ -726,6 +778,23 @@ function DesktopHistoryScreen({
     [batches, effectiveFilter, hiddenIds],
   );
 
+  // Texts have no pin or preview, so they sit in their own list above the image groups.
+  const textItems = React.useMemo<TextItem[]>(
+    () =>
+      effectiveFilter === "pinned"
+        ? []
+        : batches
+            .filter((b) => effectiveFilter === "all" || b.phoneName === effectiveFilter)
+            .flatMap((b) =>
+              b.texts.map((t) => ({
+                ...t,
+                phoneName: b.phoneName,
+                receivedAt: b.receivedAt,
+              })),
+            ),
+    [batches, effectiveFilter],
+  );
+
   const currentActiveId =
     activeImageId && items.some((i) => i.imageId === activeImageId)
       ? activeImageId
@@ -966,7 +1035,7 @@ function DesktopHistoryScreen({
           </div>
         ) : null}
 
-        {groups.length === 0 ? (
+        {groups.length === 0 && textItems.length === 0 ? (
           <Card className="my-auto flex flex-col items-center gap-3 rounded-2xl border-0 bg-muted px-4 py-6 text-center">
             <div className="rounded-xl bg-background p-2 ring-1 ring-border/70">
               <img
@@ -1000,6 +1069,25 @@ function DesktopHistoryScreen({
           </Card>
         ) : (
           <div className="flex flex-col gap-4">
+            {textItems.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                {textItems.map((item) => (
+                  <TextCard
+                    key={item.id}
+                    item={item}
+                    justCopied={copiedId === item.id}
+                    onCopy={() => {
+                      void api.copyHistoryText(item.id).then(() => {
+                        markCopied(item.id);
+                      });
+                    }}
+                    onDelete={() => {
+                      void api.deleteHistoryText(item.id).then(() => reload());
+                    }}
+                  />
+                ))}
+              </div>
+            ) : null}
             {groups.map((group) => (
               <div key={group.label} className="flex flex-col gap-2">
                 <div className="flex items-center justify-center">
