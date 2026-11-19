@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
-    "android:apk": "node scripts/setup-android-signing.mjs && npm run tauri -- android build --apk --target aarch64"
+    "android:setup": "node scripts/setup-android-native.mjs",
+    "android:apk": "node scripts/setup-android-native.mjs && node scripts/setup-android-signing.mjs && npm run tauri -- android build --apk --target aarch64"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.2.1",

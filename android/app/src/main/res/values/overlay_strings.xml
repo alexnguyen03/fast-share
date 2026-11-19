@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="handle_description">Fast Share quick capture</string>
+    <string name="panel_capture">Capture and send</string>
+    <string name="panel_latest">Send latest screenshot</string>
+    <string name="panel_open_app">Open Fast Share</string>
+</resources>

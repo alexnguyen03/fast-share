@@ -18,6 +18,7 @@ import { Label } from "../../shared/ui/label";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import { showToast } from "../../shared/ui/toast";
 import { PhoneFrame, type PhoneTab } from "../frame";
+import { QuickCaptureCard } from "./quick-capture";
 
 export function PhoneSettingsScreen({
   initialSettings,
@@ -206,6 +207,8 @@ export function PhoneSettingsScreen({
             }}
           />
         </Card>
+
+        <QuickCaptureCard />
 
         <Card className="mt-auto flex flex-col gap-1.5 border-0 bg-muted p-3">
           <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

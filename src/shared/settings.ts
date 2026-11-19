@@ -79,6 +79,11 @@ declare global {
   interface Window {
     __FAST_SHARE_ANDROID__?: {
       setSystemBars(isLightTheme: boolean, bgHex: string): void;
+      setOverlayTheme(bgHex: string, primaryHex: string): void;
+      getOverlayState(): string;
+      setOverlay(enabled: boolean, side: string): void;
+      openAccessibilitySettings(): void;
+      openAppInfo(): void;
     };
   }
 }
@@ -97,5 +102,6 @@ export function applyTheme(theme: string): void {
       preset.mode === "light",
       preset.bg,
     );
+    window.__FAST_SHARE_ANDROID__?.setOverlayTheme?.(preset.bg, preset.primary);
   }
 }

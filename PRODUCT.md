@@ -23,7 +23,7 @@ Fast Share starts where LocalSend ends: the image is annotated on the phone, the
 ## Operating Context
 
 - Uses the local Wi-Fi network; both devices are on the same LAN.
-- On iOS the entry point is the Photos share sheet (a share extension); Android runs the same phone UI but does not yet register a share target.
+- On iOS the entry point is the Photos share sheet (a share extension); Android runs the same phone UI, registers a share target, and offers an edge handle for one-tap screenshot and send.
 - The computer app is the host: it receives images, keeps history for a configurable number of days, and can copy one image to the clipboard.
 - Pairing is via scanning a QR code shown by the computer.
 

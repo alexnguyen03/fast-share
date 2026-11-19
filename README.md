@@ -15,7 +15,7 @@ Clients:
 - iPhone, and the same phone UI on Android
 - Windows, macOS, and Linux
 
-The Photos share sheet is the iOS share extension. Android runs the phone UI; it does not register that share target yet. There is no cloud relay and no account.
+The Photos share sheet is the iOS share extension. Android registers a share target too, and adds a slim edge handle (quick capture) that screenshots the screen and opens the editor. There is no cloud relay and no account.
 
 ## Build
 
@@ -111,7 +111,7 @@ npm run tauri android init
 npm run tauri android dev
 ```
 
-`tauri android dev` installs the phone UI on an emulator or a USB device. Use it to scan a computer QR code and confirm the computer is listed. Sending from the Android share sheet is not wired up yet.
+`tauri android dev` installs the phone UI on an emulator or a USB device. Use it to scan a computer QR code and confirm the computer is listed. The Android share sheet and the quick-capture edge handle are native code in `android/`, not under `gen/`: `npm run android:setup` (also part of `android:apk`) copies it into `src-tauri/gen/android` after every `tauri android init`. To show the handle, open Settings in the app and turn on Fast Share under Accessibility. On Android 13+ with a sideloaded APK, first open App info, tap the three dots and choose Allow restricted settings.
 
 To put a sideload APK on a real phone:
 
@@ -129,6 +129,39 @@ Do not install `*-unsigned.apk` or the debug APK. A plain `tauri android build` 
 Copy `app-universal-release.apk` to the phone. On Samsung One UI there is no global Chrome “unknown sources” toggle: turn off Settings → Security and privacy → Auto Blocker, open the APK in My Files, and allow My Files to install unknown apps. Uninstall any earlier Fast Share build first if the signature does not match.
 
 Run `npm run android:apk` again after `tauri android init`. The init regenerates `src-tauri/gen/android`, and the npm script reattaches signing.
+
+#### Build and install over USB
+
+With the phone plugged in you can skip copying the file:
+
+1. On the phone, turn on Developer options (tap the build number 7 times), then USB debugging. On Xiaomi also turn on Install via USB. Set the USB mode to File transfer, and tap Always allow on the “Allow USB debugging?” prompt.
+2. Check the phone is listed as `device`, not `unauthorized`. `adb` lives in `%LOCALAPPDATA%\Android\Sdk\platform-tools` and is usually not on `PATH`, so call it by full path or add that folder to `PATH`:
+
+   ```powershell
+   $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+   & $adb devices
+   ```
+
+3. Build, then install over the existing app (`-r` keeps its data):
+
+   ```powershell
+   npm run android:apk
+   & $adb install -r src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk
+   ```
+
+   With more than one device or emulator listed, `adb` stops with `more than one device/emulator`. Take the serial from `& $adb devices` (a phone looks like `911327dc`, an emulator like `emulator-5554`) and name the target:
+
+   ```powershell
+   & $adb -s 911327dc install -r src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk
+   ```
+
+   `Success` means it is installed. If you see `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the earlier build was signed with a different key: uninstall it once (this deletes its data) and install again.
+
+`npm run android:apk` needs `cargo` on `PATH`; if it stops with `cargo metadata … program not found`, add `%USERPROFILE%\.cargo\bin` to `PATH` and open a new terminal. For quick iteration use `npm run tauri android dev` instead: it installs a debug build, picks the device by the index it prints, and reloads the UI as you edit.
+
+On HyperOS, `tauri android dev` may print `Injecting input events requires … INJECT_EVENTS` after the install. The app is still installed and started. Turn on USB debugging (Security settings) to silence it.
+
+After a reinstall Android may switch the Fast Share Accessibility service off. If the edge handle is missing, turn it on again under Accessibility → Downloaded apps → Fast Share. On Xiaomi, lock the app card in Recents so swiping it away does not stop the service.
 
 ## Device builds
 
