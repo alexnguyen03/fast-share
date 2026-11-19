@@ -72,6 +72,7 @@ class MainActivity : TauriActivity() {
     fun getOverlayState(): String = JSONObject()
       .put("enabled", OverlayPrefs.enabled(this@MainActivity))
       .put("side", OverlayPrefs.side(this@MainActivity))
+      .put("openOnScreenshot", OverlayPrefs.openOnScreenshot(this@MainActivity))
       .put("accessibility", FastShareOverlayService.isEnabled(this@MainActivity))
       .put("xiaomi", Build.MANUFACTURER.lowercase() in listOf("xiaomi", "redmi", "poco"))
       .toString()
@@ -83,8 +84,27 @@ class MainActivity : TauriActivity() {
     }
 
     @JavascriptInterface
+    fun setOpenOnScreenshot(open: Boolean) {
+      OverlayPrefs.saveOpenOnScreenshot(this@MainActivity, open)
+    }
+
+    @JavascriptInterface
     fun openAccessibilitySettings() {
       startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+
+    // Xiaomi/HyperOS: without Autostart the system cannot rebind the service after the app is swiped away.
+    @JavascriptInterface
+    fun openAutostart() {
+      val miui = Intent().setClassName(
+        "com.miui.securitycenter",
+        "com.miui.permcenter.autostart.AutoStartManagementActivity",
+      )
+      try {
+        startActivity(miui)
+      } catch (_: Exception) {
+        openAppInfo()
+      }
     }
 
     @JavascriptInterface

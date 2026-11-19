@@ -31,6 +31,7 @@ class FastShareCaptureService : Service() {
   private var observer: ContentObserver? = null
   @Volatile private var lastScreenshotId: Long = -1L
   @Volatile private var lastFileTimestamp: Long = 0L
+  @Volatile private var forceOpenUntil: Long = 0L
 
   override fun onCreate() {
     super.onCreate()
@@ -184,11 +185,13 @@ class FastShareCaptureService : Service() {
 
   @Synchronized
   private fun checkForNewScreenshot() {
+    // Our own fallback capture (pollBurst) must still open the editor, whatever the setting says.
+    val open = OverlayPrefs.openOnScreenshot(this) || System.currentTimeMillis() < forceOpenUntil
     val latestId = queryLatestScreenshotId()
     if (latestId > 0L && latestId != lastScreenshotId) {
       lastScreenshotId = latestId
       val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, latestId)
-      if (writeUriToInbox(uri)) {
+      if (open && writeUriToInbox(uri)) {
         lastFileTimestamp = latestScreenshotFile()?.lastModified() ?: System.currentTimeMillis()
         openSendPanel()
         return
@@ -198,7 +201,7 @@ class FastShareCaptureService : Service() {
     val newestFile = latestScreenshotFile()
     if (newestFile != null && newestFile.lastModified() > lastFileTimestamp) {
       lastFileTimestamp = newestFile.lastModified()
-      if (writeFileToInbox(newestFile)) {
+      if (open && writeFileToInbox(newestFile)) {
         lastScreenshotId = queryLatestScreenshotId().coerceAtLeast(lastScreenshotId)
         openSendPanel()
       }
@@ -241,6 +244,7 @@ class FastShareCaptureService : Service() {
   }
 
   fun pollBurst() {
+    forceOpenUntil = System.currentTimeMillis() + 4000
     val exec = scheduler ?: return
     for (delayMs in listOf(250L, 550L, 900L, 1400L, 2000L)) {
       exec.schedule({ checkForNewScreenshot() }, delayMs, TimeUnit.MILLISECONDS)

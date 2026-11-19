@@ -10,6 +10,7 @@ type OverlayState = {
   enabled: boolean;
   side: "left" | "right";
   accessibility: boolean;
+  openOnScreenshot: boolean;
   xiaomi: boolean;
 };
 
@@ -60,6 +61,17 @@ export function QuickCaptureCard(): React.JSX.Element | null {
           onCheckedChange={(next) => update({ enabled: next === true })}
         />
       </div>
+      <div className="flex items-center justify-between">
+        <Label htmlFor="openOnScreenshot">{en.openOnScreenshot}</Label>
+        <Checkbox
+          id="openOnScreenshot"
+          checked={state.openOnScreenshot}
+          onCheckedChange={(next) => {
+            bridge.setOpenOnScreenshot(next === true);
+            setState({ ...state, openOnScreenshot: next === true });
+          }}
+        />
+      </div>
       <div className="grid grid-cols-2 gap-1.5">
         {(["left", "right"] as const).map((side) => (
           <Button
@@ -103,9 +115,27 @@ export function QuickCaptureCard(): React.JSX.Element | null {
         </div>
       )}
       {state.xiaomi && (
-        <p className="m-0 text-xs text-muted-foreground">
-          {en.quickCaptureXiaomi}
-        </p>
+        <div className="flex flex-col gap-2 text-xs text-muted-foreground">
+          <p className="m-0">{en.quickCaptureXiaomi}</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => bridge.openAutostart()}
+            >
+              {en.openAutostart}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => bridge.openAppInfo()}
+            >
+              {en.openAppInfo}
+            </Button>
+          </div>
+        </div>
       )}
     </Card>
   );

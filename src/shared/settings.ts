@@ -81,9 +81,11 @@ declare global {
       setSystemBars(isLightTheme: boolean, bgHex: string): void;
       setOverlayTheme(bgHex: string, primaryHex: string): void;
       getOverlayState(): string;
+      setOpenOnScreenshot(open: boolean): void;
       setOverlay(enabled: boolean, side: string): void;
       openAccessibilitySettings(): void;
       openAppInfo(): void;
+      openAutostart(): void;
     };
   }
 }

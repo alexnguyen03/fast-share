@@ -27,6 +27,13 @@ object OverlayPrefs {
     prefs(ctx).edit().putString("themeBg", bg).putString("themePrimary", primary).apply()
   }
 
+  /** Open the editor when a screenshot is taken (default on). Off = screenshots are left alone. */
+  fun openOnScreenshot(ctx: Context) = prefs(ctx).getBoolean("openOnScreenshot", true)
+
+  fun saveOpenOnScreenshot(ctx: Context, open: Boolean) {
+    prefs(ctx).edit().putBoolean("openOnScreenshot", open).apply()
+  }
+
   fun saveY(ctx: Context, y: Float) {
     prefs(ctx).edit().putFloat("y", y).apply()
   }
