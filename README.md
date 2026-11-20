@@ -157,6 +157,27 @@ With the phone plugged in you can skip copying the file:
 
    `Success` means it is installed. If you see `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the earlier build was signed with a different key: uninstall it once (this deletes its data) and install again.
 
+#### Build and install over Wi-Fi
+
+Android 11 or later, with the phone and the computer on the same Wi-Fi. This replaces the cable in the USB steps above; the build and `adb install` commands are the same.
+
+1. On the phone, turn on Developer options, then **Wireless debugging**.
+2. Pair once: in Wireless debugging tap **Pair device with pairing code**. It shows `IP:PAIR_PORT` and a 6-digit code:
+
+   ```powershell
+   & $adb pair IP:PAIR_PORT
+   ```
+
+3. Connect with the `IP:PORT` shown on the main Wireless debugging screen. This port differs from the pairing port and changes when Wireless debugging is turned off and on again:
+
+   ```powershell
+   & $adb connect IP:PORT
+   & $adb devices
+   ```
+
+   The phone must be listed as `device`. The serial is `IP:PORT`, so with more than one device use `& $adb -s IP:PORT install -r …`.
+4. Build and install as in the USB steps: `npm run android:apk`, then `& $adb install -r src-tauri\gen\android\app\build\outputs\apk\universal\release\app-universal-release.apk`.
+
 `npm run android:apk` needs `cargo` on `PATH`; if it stops with `cargo metadata … program not found`, add `%USERPROFILE%\.cargo\bin` to `PATH` and open a new terminal. For quick iteration use `npm run tauri android dev` instead: it installs a debug build, picks the device by the index it prints, and reloads the UI as you edit.
 
 On HyperOS, `tauri android dev` may print `Injecting input events requires … INJECT_EVENTS` after the install. The app is still installed and started. Turn on USB debugging (Security settings) to silence it.
