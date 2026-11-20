@@ -120,9 +120,11 @@ npm run tauri android init
 npm run android:apk
 ```
 
-That signs an arm64 release APK with the local Android debug keystore (needed because Android will not install an unsigned package). The file is:
+That signs an arm64 release APK with the local Android debug keystore (needed because Android will not install an unsigned package) and stamps it with the git hash and the build time. The file is copied to:
 
-`src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`
+`dist-apk/fast-share-<version>-<git hash>-<YYYYMMDD-HHmm>.apk`
+
+The same hash and time show in the app under Settings → Build, so an installed build can always be matched to a commit. A hash ending in `-dirty` means the build had uncommitted changes. The script also prints the size and SHA-256. `npm run android:apk -- --dry-run` shows the stamp and the file name without building. The unstamped original stays at `src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk`.
 
 Do not install `*-unsigned.apk` or the debug APK. A plain `tauri android build` without this script writes an unsigned package. The debug APK keeps unstripped JNI symbols and is hundreds of megabytes, so My Files on a phone often fails the install.
 
