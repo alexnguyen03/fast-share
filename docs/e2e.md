@@ -1,6 +1,6 @@
 # End-to-end encryption and threat model
 
-Status: **draft, not implemented.** `protocol.md` still describes what ships today. This file describes the target. It needs an internal security review (see Review) before any release.
+Status: **LAN channel implemented (phone to PC), relay and encryption at rest not yet.** `protocol.md` describes the shipped wire format. It needs an internal security review (see Review) before any release.
 
 Goal: the same security model on the LAN and through a relay, so that no server, network, or Wi-Fi neighbour has to be trusted with user data. Images and text are exchanged between two devices that hold each other's public keys. A relay only moves ciphertext. Data stored on the desktop is encrypted at rest.
 
@@ -37,7 +37,7 @@ Pairing is the only moment trust is created. A wrong key accepted there defeats 
 
 Each device creates one long-term X25519 key pair on first run and never sends the private key anywhere.
 
-- `deviceId` = lowercase base32 of the first 16 bytes of `SHA-256(public key)`. The id is derived from the key, so a device cannot claim someone else's id.
+- `deviceId` = the first 32 hex characters of `SHA-256(public key)`. The id is derived from the key, so a device cannot claim someone else's id.
 - Private key storage: iOS Keychain; desktop OS credential store; on Android the private key is encrypted with an AES key held in the Android Keystore (Keystore does not hold X25519 on all supported versions) and the ciphertext lives in app-private storage. Losing the key means pairing again.
 - The desktop keeps an allow-list of phone public keys. The phone keeps the desktop public key. Forgetting a device deletes that key. This replaces the per-phone `secret`.
 
@@ -49,10 +49,10 @@ One Noise handshake, `Noise_XK_25519_ChaChaPoly_SHA256`, implemented with `snow`
 - The phone is the initiator and already knows the desktop's static key. The desktop learns the phone's static key inside the handshake and checks it against the allow-list. An unknown key is only accepted in a pairing flow (below).
 - Prologue: the ASCII string `fast-share/2` plus the desktop `deviceId`. A client of another version fails the handshake instead of misparsing.
 - After the handshake, every application message is one Noise transport message. Plaintext chunks are at most 65 000 bytes (Noise limit 65 535 minus the 16-byte tag). Large images are split into chunks and reassembled by sequence number.
-- Application messages are CBOR maps with a numeric `type` field. Image bytes travel as CBOR byte strings, never base64. Types:
-  - `batch-begin { batchId, imageCount }`, then per image `image-begin { size }` and `image-chunk { seq, bytes }`, then `batch-end`
-  - `text { batchId, text }`
-  - `ack { batchId }` or `error { code }`
+- Application messages are CBOR values (an externally tagged enum, kebab-case names). Image bytes travel as CBOR byte strings, never base64. Types:
+  - `begin-images { batchId, count }`, then per image `item { size }` and `chunk` messages, then `end`
+  - `begin-text { batchId, size }`, then `chunk` messages with the UTF-8 bytes, then `end` (a text can be 1 MiB, more than one Noise message)
+  - `ack` or `error { code }`; `paired` or `rejected` after a pairing request
   - the receiver ignores unknown map keys and rejects unknown `type` values
 - Limits from `protocol.md` still apply, enforced by the receiver after decryption: at most 20 images, 20 MiB per image, 1 MiB text. The receiver discards a stream that exceeds them.
 - `batchId` de-duplication is unchanged and happens after decryption. A retry through a relay therefore never stores twice.
@@ -137,6 +137,7 @@ An external review is wanted before the project is promoted to companies. It is 
 
 Ease of use comes first in this version. These are accepted gaps, each with the point where it should be tightened:
 
+- **Private key storage:** the device key (`keys.json`) is a file in the app data directory, not wrapped by Android Keystore or iOS Keychain yet. Tighten before a public release.
 - **Linux without a credential store:** the data key is a file next to the data (see Encryption at rest). Tighten by requiring the credential store or a passphrase before promoting the app to companies.
 - **Key backup:** losing a device key means pairing again; there is no recovery. Fine while the user base is small.
 - **Relay metadata:** a relay operator sees who talks to whom, when, and how much (see Threat model).
@@ -151,4 +152,4 @@ Ease of use comes first in this version. These are accepted gaps, each with the 
 
 ## Open items
 
-- `snow` features: use `default-features = false` with `default-resolver`, `use-chacha20poly1305`, `use-sha2`, `use-curve25519`, `use-getrandom`, and do **not** enable `std`. The `std` feature pulls in `ring`, which compiles C and needs the NDK clang. Without it `snow` checks clean for `aarch64-linux-android` and Windows (checked with `cargo check`; nothing was linked or run). The iOS target was not checked because the target is not installed here and building for iOS needs a Mac. Run the handshake on a real phone before relying on it.
+- Implemented as: `snow` with `default-features = false` and `default-resolver`, `use-chacha20poly1305`, `use-sha2`, `use-curve25519`, `use-getrandom`, and without `std` (that feature pulls in `ring`; the app already links `ring` through rustls, so this only keeps `snow` itself free of C). The handshake and a 150 kB two-image batch run over a real pinned TLS WebSocket in the `runtime` tests on Windows. Android and iOS builds, and a run on a real phone, are still to be checked.

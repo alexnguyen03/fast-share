@@ -17,3 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The phone scans a pairing QR in a square, and shows each pairing step on screen.
 - The desktop tray opens the window on click and can exit while it is in the background.
 - Desktop history is a small floating panel.
+
+### Changed
+
+- Phone to computer sends now use an end-to-end encrypted channel (Noise) tied to each device's own key. Existing pairings stop working: pair again. The typed 6-digit code is replaced by "Connect" on a nearby computer, with a code to compare on both screens. See `docs/e2e.md`.
