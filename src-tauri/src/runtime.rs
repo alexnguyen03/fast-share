@@ -1143,7 +1143,81 @@ mod tests {
         let error = send_batch(&offline, &phone, "Phone", &BatchId::generate(), &[vec![1]])
             .await
             .unwrap_err();
-        assert!(matches!(error, HostError::NoServer { .. }), "{error:?}");
+        assert_eq!(error, HostError::RelayComputerOffline);
+    }
+
+    /// The "Test" button: a probe goes through the relay to this very computer, which refuses it
+    /// at once. That refusal arriving proves relay, token, pin, control socket, and handshake.
+    #[tokio::test]
+    async fn the_relay_test_proves_the_whole_path_and_names_what_is_broken() {
+        use crate::adapters::channel::Frames as _;
+        use crate::adapters::phone_client::{open_relay, test_relay};
+        use crate::domain::{mailbox_for, RelayInfo};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let relay = fast_share_relay::router(fast_share_relay::Config {
+            token: Some("tok".into()),
+            ..Default::default()
+        })
+        .into_make_service_with_connect_info::<std::net::SocketAddr>();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, relay).await;
+        });
+        let info = RelayInfo {
+            url: format!("ws://127.0.0.1:{port}"),
+            fingerprint: None,
+            token: Some("tok".into()),
+        };
+
+        let desktop = KeyPair::generate().unwrap();
+        let mailbox = mailbox_for(&desktop.public);
+        let mut control = open_relay(&info, &format!("/m/{mailbox}/desktop")).await.unwrap();
+        {
+            let (info, desktop, mailbox) = (info.clone(), desktop.clone(), mailbox.clone());
+            tokio::spawn(async move {
+                while let Ok(Some(text)) = control.next_text().await {
+                    let id = super::announced_session(&text).expect("a session id");
+                    let (info, desktop, mailbox) = (info.clone(), desktop.clone(), mailbox.clone());
+                    tokio::spawn(async move {
+                        // What serve_frames does with a key it does not know and no pairing request.
+                        let mut frames = open_relay(&info, &format!("/m/{mailbox}/s/{id}")).await.unwrap();
+                        let (established, hello) =
+                            handshake_responder(&mut frames, &desktop).await.unwrap();
+                        assert!(!hello.pair);
+                        let mut session = established.session;
+                        session
+                            .send(&mut frames, &Msg::Error { code: "not-trusted".into() })
+                            .await
+                            .unwrap();
+                        let _ = frames.recv().await;
+                    });
+                }
+            });
+        }
+
+        test_relay(&info, &desktop.public).await.expect("the probe should get through");
+
+        let wrong_token = RelayInfo { token: Some("nope".into()), ..info.clone() };
+        assert_eq!(
+            test_relay(&wrong_token, &desktop.public).await.unwrap_err(),
+            HostError::RelayRefused
+        );
+        // A computer that never connected to this relay.
+        let other = KeyPair::generate().unwrap();
+        assert_eq!(
+            test_relay(&info, &other.public).await.unwrap_err(),
+            HostError::RelayComputerOffline
+        );
+        // Nothing listening at the relay's address.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead = closed.local_addr().unwrap().port();
+        drop(closed);
+        let nowhere = RelayInfo { url: format!("ws://127.0.0.1:{dead}"), ..info.clone() };
+        assert_eq!(
+            test_relay(&nowhere, &desktop.public).await.unwrap_err(),
+            HostError::RelayUnreachable
+        );
     }
 
     #[test]

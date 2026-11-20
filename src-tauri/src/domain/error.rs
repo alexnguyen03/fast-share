@@ -45,6 +45,14 @@ pub enum HostError {
     MulticastFiltered,
     #[error("the relay refused this device: check the relay token")]
     RelayRefused,
+    #[error("could not reach the relay: check its address, that its port is open, and the network")]
+    RelayUnreachable,
+    #[error("the relay's certificate is not the one in the relay string: paste the relay string again")]
+    RelayPinMismatch,
+    #[error("the computer is not connected to the relay: open Fast Share on it and check Settings, Relay")]
+    RelayComputerOffline,
+    #[error("the relay took the connection but the computer did not answer through it")]
+    RelayNoAnswer,
     #[error("relay address is not valid")]
     InvalidRelay,
     #[error("too many pending requests, try again in a moment")]

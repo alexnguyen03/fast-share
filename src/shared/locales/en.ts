@@ -32,6 +32,12 @@ export const en = {
   relaySaved: "Relay saved.",
   relayRemoved: "Relay removed.",
   relayRemove: "Remove",
+  relayTest: "Test",
+  relayTesting: "Testing…",
+  relayTestOk: (ms: number) =>
+    `Relay works (${ms} ms). Phones can reach this computer through it.`,
+  relayReadyForQr: "Relay ready: phones away from this Wi-Fi can pair with this QR.",
+  relayNotReadyForQr: "Relay not connected: this QR only works on this Wi-Fi.",
   relayConnecting: "Connecting…",
   relayConnected: "Connected",
   relayError: (message: string) => `Not connected: ${message}`,

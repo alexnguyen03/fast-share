@@ -186,19 +186,42 @@ async fn open(dest: &QrPayload) -> Result<WsFrames, HostError> {
     } else {
         open_lan(dest, LAN_BEFORE_RELAY).await
     };
-    let miss = match lan {
+    match lan {
         Ok(frames) => return Ok(frames),
-        Err(error) if is_lan_miss(&error) => error,
+        Err(error) if is_lan_miss(&error) => {}
         Err(error) => return Err(error),
-    };
-    let mailbox = mailbox_for(&decode_public_key(&dest.pub_key)?);
-    match open_relay(relay, &format!("/m/{mailbox}/connect")).await {
-        Ok(frames) => Ok(frames),
-        // The relay itself said no: that is the more useful message.
-        Err(error @ (HostError::RelayRefused | HostError::Busy | HostError::NotTrusted)) => Err(error),
-        // 409: the relay is fine but the computer is not on it. The LAN error already says it is unreachable.
-        Err(_) => Err(miss),
     }
+    // The relay was the last resort, so its answer is the one worth showing.
+    let mailbox = mailbox_for(&decode_public_key(&dest.pub_key)?);
+    open_relay(relay, &format!("/m/{mailbox}/connect")).await
+}
+
+/// Checks the whole path from this computer: relay, token, certificate pin, the computer's own
+/// connection to the relay, and the handshake. The probe uses a throwaway key, so the computer
+/// refuses it at once ("not trusted"), and that refusal arriving is the proof. Returns milliseconds.
+pub async fn test_relay(info: &RelayInfo, own_public_key: &[u8]) -> Result<u128, HostError> {
+    let started = std::time::Instant::now();
+    let mailbox = mailbox_for(own_public_key);
+    let probe = async {
+        let mut frames = open_relay(info, &format!("/m/{mailbox}/connect")).await?;
+        let throwaway = KeyPair::generate()?;
+        let mut established = handshake_initiator(
+            &mut frames,
+            &throwaway,
+            own_public_key,
+            &hello("relay-test", None, false),
+        )
+        .await
+        .map_err(|_| HostError::RelayNoAnswer)?;
+        match established.session.recv(&mut frames).await {
+            Ok(Some(Msg::Error { code })) if code == "not-trusted" => Ok(()),
+            _ => Err(HostError::RelayNoAnswer),
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(12), probe)
+        .await
+        .unwrap_or(Err(HostError::RelayNoAnswer))?;
+    Ok(started.elapsed().as_millis())
 }
 
 /// Asks the relay whether the computer is connected to it. Plain HTTPS, so no session is started.
@@ -257,13 +280,14 @@ pub(crate) async fn open_relay(info: &RelayInfo, path: &str) -> Result<WsFrames,
         Ok(Err(WsError::Http(response))) => Err(match response.status().as_u16() {
             401 => HostError::RelayRefused,
             429 => HostError::Busy,
-            // 409: the relay is fine but the computer is not connected to it.
-            _ => HostError::Unreachable,
+            // The relay is fine but the computer is not connected to it.
+            409 => HostError::RelayComputerOffline,
+            _ => HostError::RelayUnreachable,
         }),
         Ok(Err(error)) if error.to_string().contains("fingerprint mismatch") => {
-            Err(HostError::NotTrusted)
+            Err(HostError::RelayPinMismatch)
         }
-        _ => Err(HostError::Unreachable),
+        _ => Err(HostError::RelayUnreachable),
     }
 }
 

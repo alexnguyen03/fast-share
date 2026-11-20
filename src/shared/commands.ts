@@ -482,6 +482,14 @@ export const api = {
     return invoke<RelayView>("set_relay", { text });
   },
 
+  /** Sends a probe through the relay back to this computer; resolves with milliseconds. */
+  testRelay(): Promise<number> {
+    if (!inTauri()) {
+      return Promise.resolve(42);
+    }
+    return invoke<number>("test_relay");
+  },
+
   async onRelayChanged(cb: () => void): Promise<() => void> {
     if (!inTauri()) {
       return () => undefined;
