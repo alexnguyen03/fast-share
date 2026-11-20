@@ -19,7 +19,18 @@ export function setVibrateEnabled(on: boolean): void {
 }
 
 export function buzzIfEnabled(): void {
-  if (vibrateEnabled()) {
-    void notificationFeedback("success").catch(() => {});
+  if (!vibrateEnabled()) {
+    return;
   }
+  // Android: own native pattern (the plugin's is too faint to feel). iOS keeps the plugin.
+  const bridge = window.__FAST_SHARE_ANDROID__;
+  if (bridge?.vibrateSuccess) {
+    try {
+      bridge.vibrateSuccess();
+    } catch {
+      // no vibrator: nothing to do
+    }
+    return;
+  }
+  void notificationFeedback("success").catch(() => {});
 }

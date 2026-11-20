@@ -8,9 +8,14 @@ import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.media.AudioAttributes
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.VibrationAttributes
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -99,6 +104,38 @@ class MainActivity : TauriActivity() {
     }
 
     // Xiaomi/HyperOS: without Autostart the system cannot rebind the service after the app is swiped away.
+    // The haptics plugin's pattern is two 40 ms pulses at amplitude 50-60 of 255, with no usage set:
+    // too faint to feel and dropped in silent mode on some phones. Use a firm pattern marked as touch feedback.
+    @JavascriptInterface
+    fun vibrateSuccess() {
+      val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+      } else {
+        @Suppress("DEPRECATION")
+        getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+      }
+      if (!vibrator.hasVibrator()) return
+      val timings = longArrayOf(0, 60, 80, 60)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val effect = VibrationEffect.createWaveform(timings, intArrayOf(0, 220, 0, 220), -1)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          vibrator.vibrate(effect, VibrationAttributes.createForUsage(VibrationAttributes.USAGE_TOUCH))
+        } else {
+          @Suppress("DEPRECATION")
+          vibrator.vibrate(
+            effect,
+            AudioAttributes.Builder()
+              .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+              .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+              .build(),
+          )
+        }
+      } else {
+        @Suppress("DEPRECATION")
+        vibrator.vibrate(timings, -1)
+      }
+    }
+
     // Android 10+ only lets the focused app read the clipboard; the page calls this from the foreground.
     @JavascriptInterface
     fun readClipboardText(): String {
