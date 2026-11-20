@@ -59,6 +59,7 @@ export async function filesToBase64(files: File[]): Promise<string[]> {
 
 type PairControl = {
   onWaiting?: (waiting: boolean) => void;
+  onCode?: (code: string | null) => void;
   shouldStop?: () => boolean;
 };
 
@@ -67,7 +68,7 @@ async function finishPair(
   refresh: () => Promise<void>,
   control: PairControl = {},
 ): Promise<boolean> {
-  const { onWaiting, shouldStop } = control;
+  const { onWaiting, onCode, shouldStop } = control;
   let result: PairResult;
   try {
     result = await action();
@@ -87,12 +88,6 @@ async function finishPair(
     await refresh();
     return true;
   }
-  if (result.status === "needs_forget") {
-    note(en.needsForgetOnComputer);
-    showToast(en.needsForgetOnComputer);
-    await refresh();
-    return false;
-  }
   if (result.status === "rejected") {
     note(en.rejected);
     showToast(en.rejected);
@@ -109,7 +104,8 @@ async function finishPair(
   }
   onWaiting?.(true);
   try {
-    for (let attempt = 1; attempt <= 30; attempt += 1) {
+    // The computer keeps a request for two minutes.
+    for (let attempt = 1; attempt <= 125; attempt += 1) {
       if (shouldStop?.()) {
         note(en.pairingCancelled);
         showToast(en.pairingCancelled);
@@ -125,6 +121,7 @@ async function finishPair(
       }
       try {
         const next = await api.pollPair(pc.pcId);
+        onCode?.(next.sas ?? null);
         if (next.status === "trusted") {
           const msg = en.pairedWith(pc.name);
           note(msg);
@@ -156,6 +153,7 @@ async function finishPair(
     return false;
   } finally {
     onWaiting?.(false);
+    onCode?.(null);
   }
 }
 
@@ -172,7 +170,7 @@ export function PhoneDevicesScreen({
   const [nearbyList, setNearbyList] = React.useState<NearbyPc[]>([]);
   const [lanInfo, setLanInfo] = React.useState<LanInfo | null>(null);
   const [scanning, setScanning] = React.useState<boolean>(false);
-  const [codeValue, setCodeValue] = React.useState<string>("");
+  const [compareCode, setCompareCode] = React.useState<string | null>(null);
   const [addressValue, setAddressValue] = React.useState<string>("");
   const [noticeText, setNoticeText] = React.useState<string>(latestNote());
   const [showOtherPairing, setShowOtherPairing] = React.useState<boolean>(false);
@@ -182,6 +180,7 @@ export function PhoneDevicesScreen({
   const pairControl = React.useMemo<PairControl>(
     () => ({
       onWaiting: setPairing,
+      onCode: setCompareCode,
       shouldStop: () => stopPairingRef.current,
     }),
     [],
@@ -302,24 +301,27 @@ export function PhoneDevicesScreen({
     }
   }
 
-  async function submitCode(
-    event: React.FormEvent<HTMLFormElement>,
-  ): Promise<void> {
-    event.preventDefault();
-    if (codeValue.length !== 6) {
-      return;
-    }
+  async function connectTo(pcId?: string, address?: string): Promise<void> {
     const from = lanInfo ? lanSummary(lanInfo) : en.lanThisDevice;
-    note(en.contactingComputer(from, addressValue.trim() || "mDNS"));
+    note(en.contactingComputer(from, address?.trim() || "mDNS"));
     await syncHome();
     beginPairing();
     const paired = await finishPair(
-      () => api.pairWithCode(codeValue, addressValue),
+      () => api.pairNearby(pcId, address),
       syncHome,
       pairControl,
     );
     if (paired && onPaired) {
       onPaired();
+    }
+  }
+
+  async function submitAddress(
+    event: React.FormEvent<HTMLFormElement>,
+  ): Promise<void> {
+    event.preventDefault();
+    if (addressValue.trim()) {
+      await connectTo(undefined, addressValue);
     }
   }
 
@@ -384,7 +386,14 @@ export function PhoneDevicesScreen({
                 {en.waiting}
               </p>
             </div>
-            <p className="text-xs text-muted-foreground">{en.waitAcceptHint}</p>
+            {compareCode ? (
+              <p className="text-center text-2xl font-bold tracking-[0.2em] text-foreground">
+                {compareCode}
+              </p>
+            ) : null}
+            <p className="text-xs text-muted-foreground">
+              {compareCode ? en.compareCodeHint : en.waitAcceptHint}
+            </p>
             <Button
               variant="secondary"
               size="sm"
@@ -487,6 +496,20 @@ export function PhoneDevicesScreen({
                 <span className="shrink-0 text-xs text-muted-foreground">
                   {`${item.host}:${item.port}`}
                 </span>
+                {item.paired ? null : (
+                  <Button
+                    variant="default"
+                    size="xs"
+                    disabled={pairing}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void connectTo(item.pcId);
+                    }}
+                    onKeyDown={(event) => event.stopPropagation()}
+                  >
+                    {en.connect}
+                  </Button>
+                )}
               </div>
             ))
           )}
@@ -519,33 +542,9 @@ export function PhoneDevicesScreen({
 
           {showOtherPairing ? (
             <form
-              onSubmit={(e) => void submitCode(e)}
+              onSubmit={(e) => void submitAddress(e)}
               className="flex flex-col gap-2"
             >
-              <div className="flex items-center gap-2">
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={6}
-                  placeholder={en.pairCodePlaceholder}
-                  aria-label={en.pairCodeLabel}
-                  value={codeValue}
-                  onChange={(event) =>
-                    setCodeValue(
-                      event.target.value.replace(/\D+/g, "").slice(0, 6),
-                    )
-                  }
-                  className="text-center font-semibold tracking-[0.14em]"
-                />
-                <Button
-                  type="submit"
-                  variant="secondary"
-                  className="shrink-0"
-                  disabled={codeValue.length !== 6}
-                >
-                  {en.pairWithCodeButton}
-                </Button>
-              </div>
               <Input
                 type="text"
                 placeholder={en.lanAddressPlaceholder}
@@ -553,6 +552,13 @@ export function PhoneDevicesScreen({
                 value={addressValue}
                 onChange={(event) => setAddressValue(event.target.value)}
               />
+              <Button
+                type="submit"
+                variant="secondary"
+                disabled={pairing || addressValue.trim().length === 0}
+              >
+                {en.connectToAddress}
+              </Button>
             </form>
           ) : null}
         </Card>

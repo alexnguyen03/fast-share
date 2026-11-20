@@ -6,8 +6,8 @@ mod purge_history;
 mod update_settings;
 
 pub use accept_device::{
-    accept_device, forget_device, issue_ticket, pair_status, reject_device, submit_pair,
-    submit_pair_code, PairOutcome, PairingTicket,
+    accept_device, base64_key, forget_device, issue_ticket, reject_device, request_pairing,
+    PairingTicket,
 };
 pub use copy_image::copy_image;
 #[cfg(test)]
@@ -40,29 +40,22 @@ mod tests {
         bytes
     }
 
-    fn trust_phone(store: &mut MemoryStore) -> (DeviceId, String) {
-        let clock = FixedClock(now());
-        let mut ticket = issue_ticket(&clock);
-        let device_id = DeviceId::generate();
+    fn pair_request(
+        store: &mut MemoryStore,
+        ticket: &mut PairingTicket,
+        token: Option<&str>,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<DeviceId, HostError> {
+        let key = crate::adapters::keys::KeyPair::generate().unwrap();
+        request_pairing(store, ticket, token, &key.public, "Work iPhone", "123456", at)
+    }
+
+    fn trust_phone(store: &mut MemoryStore) -> DeviceId {
+        let mut ticket = issue_ticket(&FixedClock(now()));
         let token = ticket.token.clone();
-        let pending = submit_pair(
-            store,
-            &mut ticket,
-            token.as_str(),
-            device_id.clone(),
-            "Work iPhone",
-            now(),
-        )
-        .unwrap();
-        let PairOutcome::Pending { poll_token } = pending else {
-            panic!("expected pending");
-        };
-        assert!(matches!(
-            pair_status(store, &device_id, &poll_token).unwrap(),
-            PairOutcome::Pending { .. }
-        ));
-        let secret = accept_device(store, &device_id).unwrap();
-        (device_id, secret)
+        let id = pair_request(store, &mut ticket, Some(&token), now()).unwrap();
+        accept_device(store, &id).unwrap();
+        id
     }
 
     #[test]
@@ -94,7 +87,7 @@ mod tests {
     #[test]
     fn lowering_retention_purges_older_images_immediately() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let clipboard = RecordingClipboard::new();
         let notifier = RecordingNotifier::new();
         let old = now() - chrono::Duration::days(5);
@@ -103,7 +96,6 @@ mod tests {
             &clipboard,
             &notifier,
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             &[tiny_png()],
             old,
@@ -117,13 +109,12 @@ mod tests {
     #[test]
     fn raising_retention_keeps_images() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         ingest_batch(
             &mut store,
             &RecordingClipboard::new(),
             &RecordingNotifier::new(),
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             &[tiny_png()],
             now() - chrono::Duration::days(5),
@@ -144,7 +135,6 @@ mod tests {
             &clipboard,
             &notifier,
             &stranger,
-            "nope",
             crate::domain::BatchId::generate(),
             &[tiny_png()],
             now(),
@@ -152,25 +142,14 @@ mod tests {
         .unwrap_err();
         assert_eq!(error, HostError::UnknownPhone);
 
-        let clock = FixedClock(now());
-        let mut ticket = issue_ticket(&clock);
-        let device_id = DeviceId::generate();
+        let mut ticket = issue_ticket(&FixedClock(now()));
         let token = ticket.token.clone();
-        submit_pair(
-            &mut store,
-            &mut ticket,
-            token.as_str(),
-            device_id.clone(),
-            "Work iPhone",
-            now(),
-        )
-        .unwrap();
+        let device_id = pair_request(&mut store, &mut ticket, Some(&token), now()).unwrap();
         let error = ingest_batch(
             &mut store,
             &clipboard,
             &notifier,
             &device_id,
-            "nope",
             crate::domain::BatchId::generate(),
             &[tiny_png()],
             now(),
@@ -180,40 +159,21 @@ mod tests {
     }
 
     #[test]
-    fn expired_ticket_cannot_be_reused_after_forget() {
+    fn a_used_ticket_cannot_be_reused_and_a_forgotten_phone_is_no_longer_trusted() {
         let mut store = MemoryStore::new();
-        let clock = FixedClock(now());
-        let mut ticket = issue_ticket(&clock);
+        let mut ticket = issue_ticket(&FixedClock(now()));
         let token = ticket.token.clone();
-        let device_id = DeviceId::generate();
-        submit_pair(
-            &mut store,
-            &mut ticket,
-            &token,
-            device_id.clone(),
-            "Work iPhone",
-            now(),
-        )
-        .unwrap();
-        let error = submit_pair(
-            &mut store,
-            &mut ticket,
-            &token,
-            device_id.clone(),
-            "Work iPhone",
-            now(),
-        )
-        .unwrap_err();
+        let device_id = pair_request(&mut store, &mut ticket, Some(&token), now()).unwrap();
+        let error = pair_request(&mut store, &mut ticket, Some(&token), now()).unwrap_err();
         assert_eq!(error, HostError::PairingExpired);
 
-        let secret = accept_device(&mut store, &device_id).unwrap();
+        accept_device(&mut store, &device_id).unwrap();
         forget_device(&mut store, &device_id).unwrap();
         let error = ingest_batch(
             &mut store,
             &RecordingClipboard::new(),
             &RecordingNotifier::new(),
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             &[tiny_png()],
             now(),
@@ -229,7 +189,7 @@ mod tests {
     #[test]
     fn one_image_is_copied_and_many_are_not() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let clipboard = RecordingClipboard::new();
         let notifier = RecordingNotifier::new();
         ingest_batch(
@@ -237,7 +197,6 @@ mod tests {
             &clipboard,
             &notifier,
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             &[tiny_png()],
             now(),
@@ -254,7 +213,6 @@ mod tests {
             &clipboard,
             &notifier,
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             &[tiny_png(), tiny_png()],
             now(),
@@ -271,13 +229,12 @@ mod tests {
     #[test]
     fn oversize_and_garbage_bytes_are_rejected() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let error = ingest_batch(
             &mut store,
             &RecordingClipboard::new(),
             &RecordingNotifier::new(),
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             &[vec![1, 2, 3, 4]],
             now(),
@@ -291,7 +248,6 @@ mod tests {
             &RecordingClipboard::new(),
             &RecordingNotifier::new(),
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             &[huge],
             now(),
@@ -302,34 +258,25 @@ mod tests {
     }
 
     #[test]
-    fn trusted_secret_is_returned_once_for_the_poll_token() {
+    fn only_a_phone_without_a_qr_token_needs_its_code_compared() {
         let mut store = MemoryStore::new();
-        let clock = FixedClock(now());
-        let mut ticket = issue_ticket(&clock);
-        let device_id = DeviceId::generate();
+        let mut ticket = issue_ticket(&FixedClock(now()));
         let token = ticket.token.clone();
-        let PairOutcome::Pending { poll_token } = submit_pair(
-            &mut store,
-            &mut ticket,
-            token.as_str(),
-            device_id.clone(),
-            "Work iPhone",
-            now(),
-        )
-        .unwrap() else {
-            panic!("expected pending");
-        };
-        accept_device(&mut store, &device_id).unwrap();
-        let outcome = pair_status(&mut store, &device_id, &poll_token).unwrap();
-        assert!(matches!(outcome, PairOutcome::Trusted { secret: Some(_) }));
-        let error = pair_status(&mut store, &device_id, &poll_token).unwrap_err();
-        assert_eq!(error, HostError::UnknownPhone);
+        let by_qr = pair_request(&mut store, &mut ticket, Some(&token), now()).unwrap();
+        let nearby = pair_request(&mut store, &mut ticket, None, now()).unwrap();
+        assert_eq!(store.get_phone(&by_qr).unwrap().unwrap().sas, None);
+        assert_eq!(
+            store.get_phone(&nearby).unwrap().unwrap().sas.as_deref(),
+            Some("123456")
+        );
+        accept_device(&mut store, &nearby).unwrap();
+        assert_eq!(store.get_phone(&nearby).unwrap().unwrap().sas, None);
     }
 
     #[test]
     fn duplicate_batch_id_is_a_no_op_and_does_not_overwrite_clipboard() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let clipboard = RecordingClipboard::new();
         let notifier = RecordingNotifier::new();
         let batch_id = crate::domain::BatchId::generate();
@@ -338,7 +285,6 @@ mod tests {
             &clipboard,
             &notifier,
             &device_id,
-            &secret,
             batch_id.clone(),
             &[tiny_png()],
             now(),
@@ -353,7 +299,6 @@ mod tests {
             &clipboard,
             &notifier,
             &device_id,
-            &secret,
             batch_id,
             &[tiny_png()],
             now(),
@@ -367,43 +312,27 @@ mod tests {
     #[test]
     fn batch_over_twenty_images_is_rejected_before_decode() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let batch_id = crate::domain::BatchId::generate();
-        let error = authorize_batch(&store, &device_id, &secret, &batch_id, 21).unwrap_err();
+        let error = authorize_batch(&store, &device_id, &batch_id, 21).unwrap_err();
         assert_eq!(error, HostError::ImageUndecodable);
     }
 
     #[test]
-    fn trusted_device_re_pair_does_not_reissue_secret_or_consume_ticket() {
+    fn a_trusted_key_asking_again_does_not_consume_the_ticket() {
         let mut store = MemoryStore::new();
-        let (device_id, _secret) = trust_phone(&mut store);
-        let clock = FixedClock(now());
-        let mut ticket = issue_ticket(&clock);
+        let mut ticket = issue_ticket(&FixedClock(now()));
         let token = ticket.token.clone();
-        let outcome = submit_pair(
-            &mut store,
-            &mut ticket,
-            &token,
-            device_id,
-            "Work iPhone",
-            now(),
-        )
-        .unwrap();
-        assert_eq!(outcome, PairOutcome::Trusted { secret: None });
-        assert!(!ticket.used);
+        let key = crate::adapters::keys::KeyPair::generate().unwrap();
+        let id = request_pairing(&mut store, &mut ticket, Some(&token), &key.public, "Phone", "1", now()).unwrap();
+        accept_device(&mut store, &id).unwrap();
 
-        let second_device = DeviceId::generate();
-        let second_outcome = submit_pair(
-            &mut store,
-            &mut ticket,
-            &token,
-            second_device,
-            "Second iPhone",
-            now(),
-        )
-        .unwrap();
-        assert!(matches!(second_outcome, PairOutcome::Pending { .. }));
-        assert!(ticket.used);
+        let mut fresh = issue_ticket(&FixedClock(now()));
+        let fresh_token = fresh.token.clone();
+        let again = request_pairing(&mut store, &mut fresh, Some(&fresh_token), &key.public, "Phone", "1", now()).unwrap();
+        assert_eq!(again, id);
+        assert!(!fresh.used);
+        assert_eq!(store.get_phone(&id).unwrap().unwrap().trust, DeviceTrust::Trusted);
     }
 
     #[test]
@@ -424,55 +353,53 @@ mod tests {
     }
 
     #[test]
-    fn six_digit_code_pairs_pending_device_and_cannot_be_replayed() {
+    fn a_wrong_or_expired_qr_token_is_refused_and_pending_requests_are_capped_and_expire() {
         let mut store = MemoryStore::new();
-        let clock = FixedClock(now());
-        let mut ticket = issue_ticket(&clock);
-        assert_eq!(ticket.code.len(), 6);
-        assert!(ticket.code.chars().all(|c| c.is_ascii_digit()));
-        let code = ticket.code.clone();
-        let device_id = DeviceId::generate();
-
-        let wrong = submit_pair_code(
-            &mut store,
-            &mut ticket,
-            "000000",
-            device_id.clone(),
-            "Android Phone",
-            now(),
-        )
-        .unwrap_err();
+        let mut ticket = issue_ticket(&FixedClock(now()));
+        let wrong = pair_request(&mut store, &mut ticket, Some("not-the-token"), now()).unwrap_err();
         assert_eq!(wrong, HostError::PairingExpired);
         assert!(!ticket.used);
+        let late = now() + chrono::Duration::minutes(11);
+        let token = ticket.token.clone();
+        let error = pair_request(&mut store, &mut ticket, Some(&token), late).unwrap_err();
+        assert_eq!(error, HostError::PairingExpired);
 
-        let outcome = submit_pair_code(
-            &mut store,
-            &mut ticket,
-            &code,
-            device_id.clone(),
-            "Android Phone",
-            now(),
+        for _ in 0..5 {
+            pair_request(&mut store, &mut ticket, None, now()).unwrap();
+        }
+        let error = pair_request(&mut store, &mut ticket, None, now()).unwrap_err();
+        assert_eq!(error, HostError::Busy);
+        // Two minutes later the unanswered requests have expired and free their slots.
+        let later = now() + chrono::Duration::minutes(3);
+        pair_request(&mut store, &mut ticket, None, later).unwrap();
+    }
+
+    #[test]
+    fn a_phone_record_from_before_the_secure_channel_loads_but_is_never_trusted() {
+        let old: crate::domain::PhoneRecord = serde_json::from_str(
+            r#"{"id":"abcdefgh12345678","name":"Old","trust":"trusted","secret":"s","pollToken":null}"#,
         )
         .unwrap();
-        assert!(matches!(outcome, PairOutcome::Pending { .. }));
-        assert!(ticket.used);
-
-        let replay = submit_pair_code(
+        assert_eq!(old.public_key, None);
+        let mut store = MemoryStore::new();
+        store.upsert_phone(old.clone()).unwrap();
+        let error = ingest_batch(
             &mut store,
-            &mut ticket,
-            &code,
-            device_id,
-            "Android Phone",
+            &RecordingClipboard::new(),
+            &RecordingNotifier::new(),
+            &old.id,
+            crate::domain::BatchId::generate(),
+            &[tiny_png()],
             now(),
         )
         .unwrap_err();
-        assert_eq!(replay, HostError::PairingExpired);
+        assert_eq!(error, HostError::NotTrusted);
     }
 
     #[test]
     fn disabling_auto_copy_to_clipboard_skips_clipboard_write() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         update_settings(
             &mut store,
             r#"{"autoCopyToClipboard":false,"closeToTray":false,"autoStartWithOs":true}"#,
@@ -491,7 +418,6 @@ mod tests {
             &clipboard,
             &notifier,
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             &[tiny_png()],
             now(),
@@ -504,7 +430,7 @@ mod tests {
     #[test]
     fn pinned_images_survive_retention_purge_and_delete_all() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let clipboard = RecordingClipboard::new();
         let notifier = RecordingNotifier::new();
         let old = now() - chrono::Duration::days(10);
@@ -513,7 +439,6 @@ mod tests {
             &clipboard,
             &notifier,
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             &[tiny_png(), tiny_png()],
             old,
@@ -543,24 +468,23 @@ mod tests {
         clipboard: &RecordingClipboard,
         notifier: &RecordingNotifier,
         device_id: &DeviceId,
-        secret: &str,
         batch_id: crate::domain::BatchId,
         text: &str,
     ) -> Result<(), HostError> {
-        ingest_text(store, clipboard, notifier, device_id, secret, batch_id, text, now())
+        ingest_text(store, clipboard, notifier, device_id, batch_id, text, now())
     }
 
     #[test]
     fn text_is_stored_copied_and_notified() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let clipboard = RecordingClipboard::new();
         let notifier = RecordingNotifier::new();
         let batch_id = crate::domain::BatchId::generate();
-        send_text(&mut store, &clipboard, &notifier, &device_id, &secret, batch_id.clone(), "hello")
+        send_text(&mut store, &clipboard, &notifier, &device_id, batch_id.clone(), "hello")
             .unwrap();
         // Same batch id again: no second copy, no second notice.
-        send_text(&mut store, &clipboard, &notifier, &device_id, &secret, batch_id, "hello")
+        send_text(&mut store, &clipboard, &notifier, &device_id, batch_id, "hello")
             .unwrap();
         let batches = store.list_batches().unwrap();
         assert_eq!(batches.len(), 1);
@@ -572,16 +496,16 @@ mod tests {
     #[test]
     fn text_rejects_bad_input_and_untrusted_senders() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let clipboard = RecordingClipboard::new();
         let notifier = RecordingNotifier::new();
         let id = || crate::domain::BatchId::generate();
         assert_eq!(
-            send_text(&mut store, &clipboard, &notifier, &device_id, "wrong", id(), "hi"),
-            Err(HostError::NotTrusted)
+            send_text(&mut store, &clipboard, &notifier, &DeviceId::generate(), id(), "hi"),
+            Err(HostError::UnknownPhone)
         );
         assert_eq!(
-            send_text(&mut store, &clipboard, &notifier, &device_id, &secret, id(), "   "),
+            send_text(&mut store, &clipboard, &notifier, &device_id, id(), "   "),
             Err(HostError::InvalidText)
         );
         assert!(store.list_batches().unwrap().is_empty());
@@ -592,7 +516,7 @@ mod tests {
     fn auto_copy_off_still_stores_text() {
         let mut store = MemoryStore::new();
         store.settings.auto_copy_to_clipboard = false;
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let clipboard = RecordingClipboard::new();
         let notifier = RecordingNotifier::new();
         send_text(
@@ -600,7 +524,6 @@ mod tests {
             &clipboard,
             &notifier,
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             "hello",
         )
@@ -612,7 +535,7 @@ mod tests {
     #[test]
     fn text_only_batches_survive_image_deletes_and_expire_with_retention() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let clipboard = RecordingClipboard::new();
         let notifier = RecordingNotifier::new();
         send_text(
@@ -620,7 +543,6 @@ mod tests {
             &clipboard,
             &notifier,
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             "keep me",
         )
@@ -630,7 +552,6 @@ mod tests {
             &clipboard,
             &notifier,
             &device_id,
-            &secret,
             crate::domain::BatchId::generate(),
             &[tiny_png()],
             now(),
@@ -656,7 +577,7 @@ mod tests {
     #[test]
     fn delete_text_removes_only_that_text() {
         let mut store = MemoryStore::new();
-        let (device_id, secret) = trust_phone(&mut store);
+        let device_id = trust_phone(&mut store);
         let clipboard = RecordingClipboard::new();
         let notifier = RecordingNotifier::new();
         for text in ["one", "two"] {
@@ -665,7 +586,6 @@ mod tests {
                 &clipboard,
                 &notifier,
                 &device_id,
-                &secret,
                 crate::domain::BatchId::generate(),
                 text,
             )

@@ -14,6 +14,8 @@ pub struct DiscoveredHost {
     pub host: String,
     pub port: u16,
     pub fingerprint: String,
+    /// The desktop's X25519 public key. Unauthenticated: the phone must confirm it with the code.
+    pub public_key: String,
 }
 
 /// Register (or re-register) the host on the given LAN address. A rebind after
@@ -25,11 +27,17 @@ pub fn advertise(
     name: &str,
     port: u16,
     fingerprint: &str,
+    public_key: &str,
 ) -> Result<(), HostError> {
     let daemon = advertiser_daemon()?;
     let host = format!("{pc_id}.local.");
     let instance = format!("fast-share-{pc_id}");
-    let properties = [("id", pc_id), ("name", name), ("fp", fingerprint)];
+    let properties = [
+        ("id", pc_id),
+        ("name", name),
+        ("fp", fingerprint),
+        ("pk", public_key),
+    ];
     let service = mdns_sd::ServiceInfo::new(
         "_fastshare._tcp.local.",
         &instance,
@@ -99,6 +107,10 @@ pub fn browse_hosts(timeout: Duration) -> Vec<DiscoveredHost> {
                 .get_property("fp")
                 .map(|prop| prop.val_str().to_ascii_lowercase())
                 .unwrap_or_default();
+            let public_key = info
+                .get_property("pk")
+                .map(|prop| prop.val_str().to_string())
+                .unwrap_or_default();
             let Some(ip) = info
                 .get_addresses_v4()
                 .into_iter()
@@ -117,6 +129,9 @@ pub fn browse_hosts(timeout: Duration) -> Vec<DiscoveredHost> {
                 if !fingerprint.is_empty() {
                     existing.fingerprint = fingerprint;
                 }
+                if !public_key.is_empty() {
+                    existing.public_key = public_key;
+                }
             } else {
                 hosts.push(DiscoveredHost {
                     pc_id: id.to_string(),
@@ -124,6 +139,7 @@ pub fn browse_hosts(timeout: Duration) -> Vec<DiscoveredHost> {
                     host: ip,
                     port,
                     fingerprint,
+                    public_key,
                 });
             }
         }

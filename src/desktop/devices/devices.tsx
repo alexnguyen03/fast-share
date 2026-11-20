@@ -229,6 +229,14 @@ function DesktopDevicesScreen({
                   <span className="min-w-0 flex-1 truncate text-base font-medium text-foreground">
                     {pending.name}
                   </span>
+                  {pending.sas ? (
+                    <span
+                      className="shrink-0 text-base font-bold tracking-[0.14em]"
+                      title={en.compareCodeOnComputer(pending.sas)}
+                    >
+                      {pending.sas}
+                    </span>
+                  ) : null}
                   <div className="flex items-center gap-1.5">
                     <Button
                       variant="default"
@@ -288,12 +296,6 @@ function DesktopDevicesScreen({
               className="h-39 w-39 rounded-lg"
             />
             <p className="text-sm font-medium">{status.pcName}</p>
-            <p className="mt-1 text-center text-xl font-bold tracking-[0.12em]">
-              {status.pairCode}
-            </p>
-            <p className="text-center text-xs text-muted-foreground">
-              {en.pairCodeHint}
-            </p>
             <p className="text-sm text-muted-foreground">{status.lanAddress}</p>
             <p className="text-xs text-muted-foreground">
               {`${en.lanThisDevice}: ${lanInfo.ip}  ·  ${en.lanSubnet}: ${lanInfo.subnet}`}

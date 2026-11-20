@@ -17,8 +17,15 @@ pub struct PhoneRecord {
     pub id: DeviceId,
     pub name: String,
     pub trust: DeviceTrust,
-    pub secret: Option<String>,
-    pub poll_token: Option<String>,
+    /// The phone's X25519 public key (standard base64). Trust belongs to this key.
+    /// Absent in records written before the secure channel existed; those can never be trusted.
+    #[serde(default)]
+    pub public_key: Option<String>,
+    /// The 6-digit code the user compares when the phone was not introduced by a QR code.
+    #[serde(default)]
+    pub sas: Option<String>,
+    #[serde(default)]
+    pub requested_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub fn text_notification_body(phone_name: &str, copied: bool) -> String {

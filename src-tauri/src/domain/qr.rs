@@ -3,7 +3,6 @@ use std::net::Ipv4Addr;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::error::HostError;
 use super::ids::PcId;
@@ -17,14 +16,16 @@ pub struct QrPayload {
     pub host: String,
     pub port: u16,
     pub token: String,
+    /// TLS certificate pin: an extra layer, the channel does not rely on it.
     pub fingerprint: String,
-    pub cert_der: String,
+    /// The desktop's X25519 public key (standard base64). This is what the phone trusts.
+    pub pub_key: String,
     pub expires_at: String,
 }
 
 pub fn parse_qr(text: &str) -> Result<QrPayload, HostError> {
     let payload: QrPayload = serde_json::from_str(text).map_err(|_| HostError::PairingExpired)?;
-    if payload.v != 1 {
+    if payload.v != 2 {
         return Err(HostError::PairingExpired);
     }
     PcId::parse(&payload.pc_id)?;
@@ -39,12 +40,11 @@ pub fn parse_qr(text: &str) -> Result<QrPayload, HostError> {
     if !payload.fingerprint.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(HostError::PairingExpired);
     }
-    let der = base64::engine::general_purpose::STANDARD
-        .decode(payload.cert_der.trim())
+    let key = base64::engine::general_purpose::STANDARD
+        .decode(payload.pub_key.trim())
         .map_err(|_| HostError::PairingExpired)?;
-    let actual = hex::encode(Sha256::digest(&der));
-    if actual != payload.fingerprint.to_ascii_lowercase() {
-        return Err(HostError::NotTrusted);
+    if key.len() != 32 {
+        return Err(HostError::PairingExpired);
     }
     let expires = DateTime::parse_from_rfc3339(&payload.expires_at)
         .map_err(|_| HostError::PairingExpired)?
@@ -54,7 +54,7 @@ pub fn parse_qr(text: &str) -> Result<QrPayload, HostError> {
     }
     Ok(QrPayload {
         fingerprint: payload.fingerprint.to_ascii_lowercase(),
-        cert_der: payload.cert_der.trim().to_string(),
+        pub_key: payload.pub_key.trim().to_string(),
         ..payload
     })
 }
@@ -76,14 +76,14 @@ mod tests {
     #[test]
     fn a_public_address_is_not_a_destination() {
         let payload = r#"{
-            "v": 1,
+            "v": 2,
             "pcId": "pc-office1",
             "name": "Office",
             "host": "8.8.8.8",
             "port": 47654,
             "token": "tokentoken",
             "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "certDer": "YQ==",
+            "pubKey": "YQ==",
             "expiresAt": "2099-01-01T00:00:00Z"
         }"#;
         assert_eq!(parse_qr(payload).unwrap_err(), HostError::Unreachable);

@@ -1007,6 +1007,11 @@ function DesktopHistoryScreen({
                 <p className="text-sm font-medium">
                   {en.acceptPhone(pending.name)}
                 </p>
+                {pending.sas ? (
+                  <p className="text-xs text-muted-foreground">
+                    {en.compareCodeOnComputer(pending.sas)}
+                  </p>
+                ) : null}
                 <div className="flex gap-2">
                   <Button
                     variant="default"

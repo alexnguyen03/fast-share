@@ -1,22 +1,34 @@
-use std::net::Ipv4Addr;
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-use axum::extract::{DefaultBodyLimit, State};
-use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{ConnectInfo, State};
+use axum::response::IntoResponse;
+use axum::routing::get;
 use axum::{Json, Router};
-use base64::Engine;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
+use crate::adapters::channel::{handshake_responder, sas, Established, Frames, Session};
+use crate::adapters::keys::{load_or_create_keys, KeyPair};
 use crate::adapters::{lan_ipv4, FsStore, HostCert, OsClipboard, OsNotifier};
-use crate::domain::{BatchId, DeviceId, HostError, PcId, QrPayload};
+use crate::domain::{
+    BatchId, DeviceId, DeviceTrust, HostError, Hello, Msg, PcId, QrPayload, MAX_IMAGE_BYTES,
+    MAX_TEXT_BYTES,
+};
 use crate::ports::{Clock, Store, SystemClock};
 use crate::use_cases::{
-    authorize_batch, commit_validated_batch, decode_batch_images, ingest_text, issue_ticket,
-    pair_status, submit_pair, submit_pair_code, PairOutcome, PairingTicket,
+    authorize_batch, base64_key, commit_validated_batch, decode_batch_images, ingest_text,
+    issue_ticket, reject_device, request_pairing, PairingTicket,
 };
+
+/// One batch may carry up to 20 images, but never more than this in total.
+const MAX_BATCH_BYTES: usize = 100 * 1024 * 1024;
+/// A frame is one Noise message: 65 535 bytes at most.
+const MAX_FRAME_BYTES: usize = 65_535;
 
 fn host_ports() -> std::ops::RangeInclusive<u16> {
     47654..=47670
@@ -65,6 +77,7 @@ pub struct HostInner {
     pub ticket: PairingTicket,
     pub pc_id: PcId,
     pub cert: HostCert,
+    pub keys: KeyPair,
     /// The LAN address the TLS listener is actually bound to. It can differ
     /// from the live `lan_ipv4()` after a network change until the watcher
     /// rebinds, so the QR payload must follow this field, not the live one.
@@ -92,10 +105,17 @@ pub struct KnownPc {
     pub host: String,
     pub port: u16,
     pub fingerprint: String,
-    pub cert_der: String,
-    pub secret: Option<String>,
+    /// The computer's X25519 public key (standard base64) once the user confirmed it.
     #[serde(default)]
-    pub poll_token: Option<String>,
+    pub public_key: Option<String>,
+    /// A pairing attempt is in flight (the user on the computer has not answered yet).
+    #[serde(default)]
+    pub pending: bool,
+    /// Six digits to compare with the computer, once the handshake is done.
+    #[serde(default)]
+    pub sas: Option<String>,
+    #[serde(default)]
+    pub failure: Option<String>,
 }
 
 pub fn start(app: tauri::AppHandle) -> Result<(), String> {
@@ -113,7 +133,8 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
     );
     let cert = crate::adapters::load_or_create(&dir).map_err(|error| error.to_string())?;
     let pc_id = load_pc_id(&dir).map_err(|error| error.to_string())?;
-    let phone = load_phone(&dir).map_err(|error| error.to_string())?;
+    let keys = load_or_create_keys(&dir).map_err(|error| error.to_string())?;
+    let phone = load_phone(&dir, &keys).map_err(|error| error.to_string())?;
     let known_pcs = load_known_pcs(&dir).map_err(|error| error.to_string())?;
     let is_mobile = cfg!(any(target_os = "ios", target_os = "android"));
     let bind_ip = lan_ipv4();
@@ -143,6 +164,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             key_der: cert.key_der.clone(),
             fingerprint: cert.fingerprint.clone(),
         },
+        keys: keys.clone(),
         bind_ip,
         port,
         server_handle: None,
@@ -156,7 +178,14 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         let (_, listener) = binding.ok_or_else(|| "no free LAN port".to_string())?;
         spawn_server(shared.clone(), cert_for_server, listener);
         spawn_retention_loop(shared.clone());
-        if let Err(error) = crate::adapters::advertise(bind_ip, &pc_id_text, &pc_name, port, &cert_fp)
+        if let Err(error) = crate::adapters::advertise(
+            bind_ip,
+            &pc_id_text,
+            &pc_name,
+            port,
+            &cert_fp,
+            &keys.public_b64(),
+        )
         {
             eprintln!("fast-share discovery: {error}");
         }
@@ -195,7 +224,7 @@ fn spawn_lan_watch(shared: SharedHost, app: tauri::AppHandle) {
         if desired.is_loopback() {
             continue;
         }
-        let (current_ip, current_port, pc_id_text, pc_name, fingerprint) = {
+        let (current_ip, current_port, pc_id_text, pc_name, fingerprint, public_key) = {
             let Ok(host) = shared.lock() else {
                 continue;
             };
@@ -210,6 +239,7 @@ fn spawn_lan_watch(shared: SharedHost, app: tauri::AppHandle) {
                 host.pc_id.as_str().to_string(),
                 name,
                 host.cert.fingerprint.clone(),
+                host.keys.public_b64(),
             )
         };
         if desired == current_ip {
@@ -238,7 +268,7 @@ fn spawn_lan_watch(shared: SharedHost, app: tauri::AppHandle) {
         };
         spawn_server(shared.clone(), cert, listener);
         if let Err(error) =
-            crate::adapters::advertise(desired, &pc_id_text, &pc_name, port, &fingerprint)
+            crate::adapters::advertise(desired, &pc_id_text, &pc_name, port, &fingerprint, &public_key)
         {
             eprintln!("fast-share discovery: {error}");
         }
@@ -295,20 +325,12 @@ fn spawn_server(shared: SharedHost, cert: HostCert, listener: std::net::TcpListe
             };
             let app = Router::new()
                 .route("/ready", get(ready))
-                .route("/pair", post(pair))
-                .route("/pair/code", post(pair_code))
-                .route("/pair/status", post(status))
-                .route("/batches", post(batches))
-                // Inner limit wins over the global one below: text is capped far lower than images.
-                .route(
-                    "/texts",
-                    post(texts).layer(DefaultBodyLimit::max(2 * 1024 * 1024)),
-                )
-                .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
+                .route("/v2/channel", get(channel_upgrade))
+                .route("/v2/identity", get(identity))
                 .with_state(shared);
             if let Err(error) = axum_server::from_tcp_rustls(listener, config)
                 .handle(handle)
-                .serve(app.into_make_service())
+                .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .await
             {
                 eprintln!("fast-share server: {error}");
@@ -321,237 +343,319 @@ async fn ready() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "ok": true }))
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PairBody {
-    token: String,
-    device_id: String,
-    name: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PairView {
-    status: String,
-    poll_token: Option<String>,
-    secret: Option<String>,
-}
-
-async fn pair(
+async fn identity(
     State(shared): State<SharedHost>,
-    Json(body): Json<PairBody>,
-) -> Result<Json<PairView>, (StatusCode, String)> {
-    let mut host = shared.lock().map_err(storage_status)?;
-    let device_id = DeviceId::parse(body.device_id).map_err(error_status)?;
-    let host = &mut *host;
-    let outcome = submit_pair(
-        &mut host.store,
-        &mut host.ticket,
-        &body.token,
-        device_id,
-        &body.name,
-        Utc::now(),
-    )
-    .map_err(error_status)?;
-    host.notifier
-        .emit_event("device-pair-event", body.name.trim());
-    Ok(Json(view_outcome(outcome)))
+) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    let host = shared
+        .lock()
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    let name = host
+        .store
+        .load_settings()
+        .map(|settings| settings.pc_display_name)
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({
+        "pcId": host.pc_id.as_str(),
+        "name": name,
+        "pubKey": host.keys.public_b64(),
+        "fingerprint": host.cert.fingerprint,
+    })))
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PairCodeBody {
-    code: String,
-    device_id: String,
-    name: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PairCodeView {
-    status: String,
-    poll_token: Option<String>,
-    secret: Option<String>,
-    pc_id: String,
-    name: String,
-    fingerprint: String,
-    cert_der: String,
-}
-
-async fn pair_code(
+async fn channel_upgrade(
+    ws: WebSocketUpgrade,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     State(shared): State<SharedHost>,
-    Json(body): Json<PairCodeBody>,
-) -> Result<Json<PairCodeView>, (StatusCode, String)> {
-    let mut host = shared.lock().map_err(storage_status)?;
-    let device_id = DeviceId::parse(body.device_id).map_err(error_status)?;
-    let host = &mut *host;
-    host.refresh_ticket();
-    let outcome = submit_pair_code(
-        &mut host.store,
-        &mut host.ticket,
-        &body.code,
-        device_id,
-        &body.name,
-        Utc::now(),
-    )
-    .map_err(error_status)?;
-    host.notifier
-        .emit_event("device-pair-event", body.name.trim());
-    let settings = host.store.load_settings().map_err(error_status)?;
-    let view = view_outcome(outcome);
-    Ok(Json(PairCodeView {
-        status: view.status,
-        poll_token: view.poll_token,
-        secret: view.secret,
-        pc_id: host.pc_id.as_str().to_string(),
-        name: settings.pc_display_name,
-        fingerprint: host.cert.fingerprint.clone(),
-        cert_der: base64::engine::general_purpose::STANDARD.encode(&host.cert.cert_der),
-    }))
+) -> impl IntoResponse {
+    ws.max_message_size(MAX_FRAME_BYTES)
+        .on_upgrade(move |socket| serve_channel(shared, socket, peer.ip()))
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StatusBody {
-    device_id: String,
-    poll_token: String,
-}
+struct AxumFrames(WebSocket);
 
-async fn status(
-    State(shared): State<SharedHost>,
-    Json(body): Json<StatusBody>,
-) -> Result<Json<PairView>, (StatusCode, String)> {
-    let mut host = shared.lock().map_err(storage_status)?;
-    let device_id = DeviceId::parse(body.device_id).map_err(error_status)?;
-    let outcome =
-        pair_status(&mut host.store, &device_id, &body.poll_token).map_err(error_status)?;
-    Ok(Json(view_outcome(outcome)))
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BatchBody {
-    device_id: String,
-    secret: String,
-    batch_id: String,
-    images: Vec<String>,
-}
-
-async fn batches(
-    State(shared): State<SharedHost>,
-    Json(body): Json<BatchBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let device_id = DeviceId::parse(body.device_id).map_err(error_status)?;
-    let batch_id = BatchId::parse(&body.batch_id).map_err(error_status)?;
-    let image_count = body.images.len();
-    let already_stored = {
-        let host = shared.lock().map_err(storage_status)?;
-        authorize_batch(
-            &host.store,
-            &device_id,
-            &body.secret,
-            &batch_id,
-            image_count,
-        )
-        .map_err(error_status)?
-    };
-    if already_stored {
-        return Ok(Json(
-            serde_json::json!({ "ok": true, "imageCount": image_count }),
-        ));
+impl Frames for AxumFrames {
+    async fn send(&mut self, bytes: Vec<u8>) -> Result<(), HostError> {
+        self.0
+            .send(Message::Binary(bytes.into()))
+            .await
+            .map_err(|error| HostError::Channel(error.to_string()))
     }
-    let images = body.images;
+
+    async fn recv(&mut self) -> Result<Option<Vec<u8>>, HostError> {
+        loop {
+            match self.0.recv().await {
+                None | Some(Ok(Message::Close(_))) => return Ok(None),
+                Some(Ok(Message::Binary(bytes))) => return Ok(Some(bytes.to_vec())),
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+                Some(Ok(Message::Text(_))) => {
+                    return Err(HostError::Channel("unexpected text frame".into()))
+                }
+                Some(Err(error)) => return Err(HostError::Channel(error.to_string())),
+            }
+        }
+    }
+}
+
+async fn serve_channel(shared: SharedHost, socket: WebSocket, peer: IpAddr) {
+    let mut frames = AxumFrames(socket);
+    let Ok(keys) = shared.lock().map(|host| host.keys.clone()) else {
+        return;
+    };
+    let Ok((established, hello)) = handshake_responder(&mut frames, &keys).await else {
+        return;
+    };
+    let Established {
+        mut session,
+        remote_public,
+        hash,
+    } = established;
+    let device_id = DeviceId::from_public_key(&remote_public);
+    if !is_trusted(&shared, &device_id, &remote_public) {
+        if !hello.pair {
+            let _ = session
+                .send(&mut frames, &Msg::Error { code: "not-trusted".into() })
+                .await;
+            return;
+        }
+        if !await_pairing(
+            &shared,
+            &mut session,
+            &mut frames,
+            &hello,
+            &remote_public,
+            &hash,
+            peer,
+        )
+        .await
+        {
+            return;
+        }
+    }
+    while let Ok(Some(first)) = session.recv(&mut frames).await {
+        let result = handle_message(&shared, &mut session, &mut frames, &device_id, first).await;
+        if let Err(error) = result {
+            let code = error_code(&error).to_string();
+            let _ = session.send(&mut frames, &Msg::Error { code }).await;
+            return;
+        }
+    }
+}
+
+fn is_trusted(shared: &SharedHost, device_id: &DeviceId, public_key: &[u8]) -> bool {
+    let Ok(host) = shared.lock() else {
+        return false;
+    };
+    matches!(
+        host.store.get_phone(device_id),
+        Ok(Some(phone)) if phone.trust == DeviceTrust::Trusted
+            && phone.public_key.as_deref() == Some(base64_key(public_key).as_str())
+    )
+}
+
+/// A key the desktop has never accepted asks to pair. Waits for the user, then tells the phone.
+async fn await_pairing(
+    shared: &SharedHost,
+    session: &mut Session,
+    frames: &mut AxumFrames,
+    hello: &Hello,
+    remote_public: &[u8],
+    hash: &[u8],
+    peer: IpAddr,
+) -> bool {
+    if !allow_pair_attempt(peer) {
+        let _ = session
+            .send(frames, &Msg::Error { code: "busy".into() })
+            .await;
+        return false;
+    }
+    let requested = {
+        let Ok(mut host) = shared.lock() else {
+            return false;
+        };
+        let host = &mut *host;
+        host.refresh_ticket();
+        let result = request_pairing(
+            &mut host.store,
+            &mut host.ticket,
+            hello.pairing_token.as_deref(),
+            remote_public,
+            &hello.name,
+            &sas(hash),
+            Utc::now(),
+        );
+        if result.is_ok() {
+            host.notifier
+                .emit_event("device-pair-event", hello.name.trim());
+        }
+        result
+    };
+    let device_id = match requested {
+        Ok(id) => id,
+        Err(error) => {
+            let code = error_code(&error).to_string();
+            let _ = session.send(frames, &Msg::Error { code }).await;
+            return false;
+        }
+    };
+    // 2 minutes, the same time a pending request lives in the store.
+    for _ in 0..240 {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let trust = shared
+            .lock()
+            .ok()
+            .and_then(|host| host.store.get_phone(&device_id).ok().flatten())
+            .map(|phone| phone.trust);
+        match trust {
+            Some(DeviceTrust::Trusted) => {
+                return session.send(frames, &Msg::Paired).await.is_ok();
+            }
+            Some(DeviceTrust::PendingAcceptance) => continue,
+            _ => break,
+        }
+    }
+    if let Ok(mut host) = shared.lock() {
+        let _ = reject_device(&mut host.store, &device_id);
+    }
+    let _ = session.send(frames, &Msg::Rejected).await;
+    false
+}
+
+async fn handle_message(
+    shared: &SharedHost,
+    session: &mut Session,
+    frames: &mut AxumFrames,
+    device_id: &DeviceId,
+    first: Msg,
+) -> Result<(), HostError> {
+    match first {
+        Msg::BeginImages { batch_id, count } => {
+            receive_images(shared, session, frames, device_id, &batch_id, count as usize).await?
+        }
+        Msg::BeginText { batch_id, size } => {
+            receive_text(shared, session, frames, device_id, &batch_id, size as usize).await?
+        }
+        _ => return Err(HostError::Channel("unexpected message".into())),
+    }
+    session.send(frames, &Msg::Ack).await
+}
+
+fn storage_error(error: impl std::fmt::Display) -> HostError {
+    HostError::Storage(error.to_string())
+}
+
+async fn expect_end(session: &mut Session, frames: &mut AxumFrames) -> Result<(), HostError> {
+    match session.recv(frames).await? {
+        Some(Msg::End) => Ok(()),
+        _ => Err(HostError::Channel("batch was not closed".into())),
+    }
+}
+
+async fn receive_images(
+    shared: &SharedHost,
+    session: &mut Session,
+    frames: &mut AxumFrames,
+    device_id: &DeviceId,
+    batch_id: &str,
+    count: usize,
+) -> Result<(), HostError> {
+    let batch_id = BatchId::parse(batch_id)?;
+    let already_stored = {
+        let host = shared.lock()?;
+        authorize_batch(&host.store, device_id, &batch_id, count)?
+    };
+    let mut images = Vec::with_capacity(count);
+    let mut total = 0usize;
+    for _ in 0..count {
+        let Some(Msg::Item { size }) = session.recv(frames).await? else {
+            return Err(HostError::Channel("expected an image".into()));
+        };
+        let size = size as usize;
+        total += size;
+        if size > MAX_IMAGE_BYTES || total > MAX_BATCH_BYTES {
+            return Err(HostError::ImageTooLarge);
+        }
+        images.push(session.recv_chunks(frames, size).await?);
+    }
+    expect_end(session, frames).await?;
+    if already_stored {
+        return Ok(());
+    }
     let validated = tokio::task::spawn_blocking(move || decode_batch_images(&images))
         .await
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
-        .map_err(error_status)?;
-    let mut host = shared.lock().map_err(storage_status)?;
+        .map_err(storage_error)??;
+    let mut host = shared.lock()?;
     let host = &mut *host;
     commit_validated_batch(
         &mut host.store,
         &host.clipboard,
         &host.notifier,
-        &device_id,
-        &body.secret,
+        device_id,
         batch_id,
         &validated,
         Utc::now(),
     )
-    .map_err(error_status)?;
-    Ok(Json(
-        serde_json::json!({ "ok": true, "imageCount": validated.len() }),
-    ))
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TextBody {
-    device_id: String,
-    secret: String,
-    batch_id: String,
-    text: String,
-}
-
-async fn texts(
-    State(shared): State<SharedHost>,
-    Json(body): Json<TextBody>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    let device_id = DeviceId::parse(body.device_id).map_err(error_status)?;
-    let batch_id = BatchId::parse(&body.batch_id).map_err(error_status)?;
-    let mut host = shared.lock().map_err(storage_status)?;
+async fn receive_text(
+    shared: &SharedHost,
+    session: &mut Session,
+    frames: &mut AxumFrames,
+    device_id: &DeviceId,
+    batch_id: &str,
+    size: usize,
+) -> Result<(), HostError> {
+    let batch_id = BatchId::parse(batch_id)?;
+    if size > MAX_TEXT_BYTES {
+        return Err(HostError::TextTooLarge);
+    }
+    let bytes = session.recv_chunks(frames, size).await?;
+    expect_end(session, frames).await?;
+    let text = String::from_utf8(bytes).map_err(|_| HostError::InvalidText)?;
+    let mut host = shared.lock()?;
     let host = &mut *host;
     ingest_text(
         &mut host.store,
         &host.clipboard,
         &host.notifier,
-        &device_id,
-        &body.secret,
+        device_id,
         batch_id,
-        &body.text,
+        &text,
         Utc::now(),
     )
-    .map_err(error_status)?;
-    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
-fn view_outcome(outcome: PairOutcome) -> PairView {
-    match outcome {
-        PairOutcome::Pending { poll_token } => PairView {
-            status: "pending".into(),
-            poll_token: Some(poll_token),
-            secret: None,
-        },
-        PairOutcome::Trusted { secret } => PairView {
-            status: "trusted".into(),
-            poll_token: None,
-            secret,
-        },
-        PairOutcome::Rejected => PairView {
-            status: "rejected".into(),
-            poll_token: None,
-            secret: None,
-        },
-    }
-}
-
-fn error_status(error: HostError) -> (StatusCode, String) {
-    let status = match error {
+/// Short codes the phone maps back to its own error messages.
+fn error_code(error: &HostError) -> &'static str {
+    match error {
         HostError::UnknownPhone | HostError::NotTrusted | HostError::PairingRejected => {
-            StatusCode::FORBIDDEN
+            "not-trusted"
         }
-        HostError::PairingExpired => StatusCode::GONE,
-        HostError::ImageTooLarge | HostError::TextTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+        HostError::PairingExpired => "expired",
+        HostError::Busy => "busy",
+        HostError::ImageTooLarge | HostError::TextTooLarge => "too-large",
         HostError::ImageUndecodable
         | HostError::InvalidId
         | HostError::InvalidName
-        | HostError::InvalidText => StatusCode::BAD_REQUEST,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    (status, error.to_string())
+        | HostError::InvalidText => "invalid",
+        _ => "internal",
+    }
 }
 
-fn storage_status(error: HostError) -> (StatusCode, String) {
-    (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+/// At most 10 pairing attempts a minute per address, so a stranger on the Wi-Fi cannot flood the user.
+fn allow_pair_attempt(ip: IpAddr) -> bool {
+    static ATTEMPTS: OnceLock<Mutex<HashMap<IpAddr, Vec<Instant>>>> = OnceLock::new();
+    let mut map = ATTEMPTS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let now = Instant::now();
+    let recent = map.entry(ip).or_default();
+    recent.retain(|at| now.duration_since(*at) < Duration::from_secs(60));
+    if recent.len() >= 10 {
+        return false;
+    }
+    recent.push(now);
+    true
 }
 
 impl SharedHost {
@@ -584,14 +688,14 @@ impl HostInner {
         self.refresh_ticket();
         let settings = self.store.load_settings()?;
         Ok(QrPayload {
-            v: 1,
+            v: 2,
             pc_id: self.pc_id.as_str().to_string(),
             name: settings.pc_display_name,
             host: self.listener_ip().to_string(),
             port: self.port,
             token: self.ticket.token.clone(),
             fingerprint: self.cert.fingerprint.clone(),
-            cert_der: base64::engine::general_purpose::STANDARD.encode(&self.cert.cert_der),
+            pub_key: self.keys.public_b64(),
             expires_at: self.ticket.expires_at.to_rfc3339(),
         })
     }
@@ -666,17 +770,22 @@ fn load_pc_id(dir: &std::path::Path) -> Result<PcId, HostError> {
     Ok(id)
 }
 
-fn load_phone(dir: &std::path::Path) -> Result<PhoneIdentity, HostError> {
+/// The phone's id follows its key, so an id from before keys existed is replaced once.
+fn load_phone(dir: &std::path::Path, keys: &KeyPair) -> Result<PhoneIdentity, HostError> {
     let path = dir.join("phone-identity.json");
-    if path.exists() {
+    let mut identity = if path.exists() {
         let text =
-            std::fs::read_to_string(path).map_err(|error| HostError::Storage(error.to_string()))?;
-        return serde_json::from_str(&text).map_err(|error| HostError::Storage(error.to_string()));
-    }
-    let identity = PhoneIdentity {
-        device_id: DeviceId::generate(),
-        name: default_phone_name(),
+            std::fs::read_to_string(&path).map_err(|error| HostError::Storage(error.to_string()))?;
+        serde_json::from_str(&text).map_err(|error| HostError::Storage(error.to_string()))?
+    } else {
+        PhoneIdentity {
+            device_id: keys.device_id(),
+            name: default_phone_name(),
+        }
     };
+    if identity.device_id != keys.device_id() {
+        identity.device_id = keys.device_id();
+    }
     write_json(&path, &identity)?;
     Ok(identity)
 }
@@ -713,11 +822,121 @@ fn load_known_pcs(dir: &std::path::Path) -> Result<Vec<KnownPc>, HostError> {
     }
     let text =
         std::fs::read_to_string(path).map_err(|error| HostError::Storage(error.to_string()))?;
-    serde_json::from_str(&text).map_err(|error| HostError::Storage(error.to_string()))
+    let mut pcs: Vec<KnownPc> =
+        serde_json::from_str(&text).map_err(|error| HostError::Storage(error.to_string()))?;
+    // Entries from before the secure channel have no key, and an attempt cannot outlive the app.
+    pcs.retain(|pc| pc.public_key.is_some());
+    Ok(pcs)
 }
 
 fn write_json<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<(), HostError> {
     let text = serde_json::to_string_pretty(value)
         .map_err(|error| HostError::Storage(error.to_string()))?;
     std::fs::write(path, text).map_err(|error| HostError::Storage(error.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use axum::extract::ws::WebSocketUpgrade;
+    use axum::routing::get;
+    use axum::Router;
+
+    use super::{allow_pair_attempt, AxumFrames};
+    use crate::adapters::channel::handshake_responder;
+    use crate::adapters::keys::KeyPair;
+    use crate::adapters::phone_client::{remembered_qr, send_batch};
+    use crate::domain::{BatchId, HostError, Msg, PcId};
+
+    /// A TLS server with a stand-in handler that speaks the real channel, to prove the pieces
+    /// (pinned TLS, WebSocket, Noise, chunking) work together over a real socket.
+    async fn serve_channel_stub(
+        desktop: KeyPair,
+        received: Arc<Mutex<Vec<Vec<u8>>>>,
+    ) -> (u16, String) {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = rcgen::CertificateParams::new(vec!["localhost".to_string()])
+            .unwrap()
+            .self_signed(&key)
+            .unwrap();
+        let fingerprint = crate::adapters::fingerprint(cert.der());
+        let config = axum_server::tls_rustls::RustlsConfig::from_der(
+            vec![cert.der().to_vec()],
+            key.serialize_der(),
+        )
+        .await
+        .unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = Router::new().route(
+            "/v2/channel",
+            get(move |ws: WebSocketUpgrade| {
+                let (desktop, received) = (desktop.clone(), received.clone());
+                async move {
+                    ws.on_upgrade(move |socket| async move {
+                        let mut frames = AxumFrames(socket);
+                        let (established, _hello) =
+                            handshake_responder(&mut frames, &desktop).await.unwrap();
+                        let mut session = established.session;
+                        let Some(Msg::BeginImages { count, .. }) =
+                            session.recv(&mut frames).await.unwrap()
+                        else {
+                            panic!("expected a batch");
+                        };
+                        for _ in 0..count {
+                            let Some(Msg::Item { size }) = session.recv(&mut frames).await.unwrap()
+                            else {
+                                panic!("expected an image");
+                            };
+                            let bytes = session.recv_chunks(&mut frames, size as usize).await.unwrap();
+                            received.lock().unwrap().push(bytes);
+                        }
+                        assert_eq!(session.recv(&mut frames).await.unwrap(), Some(Msg::End));
+                        session.send(&mut frames, &Msg::Ack).await.unwrap();
+                    })
+                }
+            }),
+        );
+        tokio::spawn(async move {
+            let _ = axum_server::from_tcp_rustls(listener, config)
+                .serve(app.into_make_service())
+                .await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        (port, fingerprint)
+    }
+
+    #[tokio::test]
+    async fn a_batch_crosses_the_pinned_websocket_channel_and_a_wrong_pin_is_refused() {
+        let desktop = KeyPair::generate().unwrap();
+        let phone = KeyPair::generate().unwrap();
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let (port, fingerprint) = serve_channel_stub(desktop.clone(), received.clone()).await;
+        let pc = PcId::parse("pc-test-0001").unwrap();
+        let big = vec![7u8; 150_000];
+        let small = vec![9u8; 10];
+
+        let dest = remembered_qr(&pc, "Test", "127.0.0.1", port, &fingerprint, &desktop.public_b64());
+        send_batch(&dest, &phone, "Phone", &BatchId::generate(), &[big.clone(), small.clone()])
+            .await
+            .unwrap();
+        assert_eq!(*received.lock().unwrap(), vec![big, small]);
+
+        let wrong_pin = remembered_qr(&pc, "Test", "127.0.0.1", port, &"a".repeat(64), &desktop.public_b64());
+        let error = send_batch(&wrong_pin, &phone, "Phone", &BatchId::generate(), &[vec![1]])
+            .await
+            .unwrap_err();
+        assert_eq!(error, HostError::NotTrusted);
+    }
+
+    #[test]
+    fn the_eleventh_attempt_in_a_minute_from_one_address_is_refused() {
+        let ip: std::net::IpAddr = "10.99.0.7".parse().unwrap();
+        assert!((0..10).all(|_| allow_pair_attempt(ip)));
+        assert!(!allow_pair_attempt(ip));
+        let other: std::net::IpAddr = "10.99.0.8".parse().unwrap();
+        assert!(allow_pair_attempt(other));
+    }
 }

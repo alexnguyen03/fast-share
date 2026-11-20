@@ -43,6 +43,10 @@ pub enum HostError {
     NoServer { host: String, port: u16 },
     #[error("mDNS multicast is filtered on this Wi-Fi; enter the computer IP:port shown under the QR code")]
     MulticastFiltered,
+    #[error("too many pending requests, try again in a moment")]
+    Busy,
+    #[error("secure channel failed: {0}")]
+    Channel(String),
     #[error("{0}")]
     Storage(String),
 }

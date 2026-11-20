@@ -1,43 +1,35 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use base64::Engine;
+use futures_util::{SinkExt, StreamExt};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
 use serde::Deserialize;
+use tokio_tungstenite::tungstenite::{Error as WsError, Message as WsMessage};
+use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 
-use crate::domain::{parse_qr, require_lan_host, BatchId, DeviceId, HostError, PcId, QrPayload};
+use crate::adapters::channel::{handshake_initiator, sas, Frames};
+use crate::adapters::keys::{decode_public_key, KeyPair};
+use crate::domain::{
+    require_lan_host, BatchId, Hello, HostError, Msg, PcId, QrPayload, MAX_IMAGE_BYTES,
+};
 
 const READY_TIMEOUT: Duration = Duration::from_millis(1500);
 const SHORT_TIMEOUT: Duration = Duration::from_secs(8);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long the user has to confirm on the computer (the computer drops the request after 2 minutes).
+pub const PAIRING_TIMEOUT: Duration = Duration::from_secs(130);
 
-#[derive(Debug)]
-pub struct PairReply {
-    pub status: String,
-    pub poll_token: Option<String>,
-    pub secret: Option<String>,
-}
-
-#[derive(Deserialize)]
+/// What a computer says about itself before the phone trusts it. Not authenticated:
+/// the pairing code the user compares is what makes it safe.
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct PairBody {
-    status: String,
-    poll_token: Option<String>,
-    secret: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PairCodeBody {
-    status: String,
-    poll_token: Option<String>,
-    secret: Option<String>,
-    pc_id: String,
-    name: String,
-    fingerprint: String,
-    cert_der: String,
+pub struct PcIdentity {
+    pub pc_id: String,
+    pub name: String,
+    pub pub_key: String,
+    pub fingerprint: String,
 }
 
 fn connection_error(host: &str, port: u16, error: &reqwest::Error) -> HostError {
@@ -84,181 +76,232 @@ fn classify_connect_failure(
     }
 }
 
-pub async fn pair(
-    qr_text: &str,
-    device_id: &DeviceId,
-    name: &str,
-) -> Result<(QrPayload, PairReply), HostError> {
-    let qr = parse_qr(qr_text)?;
-    let client = pinned_client(&qr, SHORT_TIMEOUT)?;
-    let response = client
-        .post(format!("https://{}:{}/pair", qr.host, qr.port))
-        .json(&serde_json::json!({
-            "token": qr.token,
-            "deviceId": device_id.as_str(),
-            "name": name,
-        }))
-        .send()
-        .await
-        .map_err(|error| connection_error(&qr.host, qr.port, &error))?;
-    let reply = read_pair(response).await?;
-    Ok((qr, reply))
+fn ws_connect_error(host: &str, port: u16, error: &WsError) -> HostError {
+    if error.to_string().contains("fingerprint mismatch") {
+        return HostError::NotTrusted;
+    }
+    let Ok(target_ip) = host.parse::<std::net::Ipv4Addr>() else {
+        return HostError::Unreachable;
+    };
+    let timed_out = matches!(error, WsError::Io(io) if io.kind() == std::io::ErrorKind::TimedOut);
+    classify_connect_failure(crate::adapters::lan_ipv4(), target_ip, port, timed_out)
 }
 
-pub async fn pair_with_code_endpoint(
-    host: &str,
-    port: u16,
-    expected_fingerprint: Option<&str>,
-    code: &str,
-    device_id: &DeviceId,
+fn code_error(code: &str) -> HostError {
+    match code {
+        "not-trusted" => HostError::NotTrusted,
+        "expired" => HostError::PairingExpired,
+        "busy" => HostError::Busy,
+        "too-large" => HostError::ImageTooLarge,
+        "invalid" => HostError::ImageUndecodable,
+        _ => HostError::Unreachable,
+    }
+}
+
+struct WsFrames(WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>);
+
+impl Frames for WsFrames {
+    async fn send(&mut self, bytes: Vec<u8>) -> Result<(), HostError> {
+        self.0
+            .send(WsMessage::Binary(bytes.into()))
+            .await
+            .map_err(|error| HostError::Channel(error.to_string()))
+    }
+
+    async fn recv(&mut self) -> Result<Option<Vec<u8>>, HostError> {
+        loop {
+            match self.0.next().await {
+                None | Some(Ok(WsMessage::Close(_))) => return Ok(None),
+                Some(Ok(WsMessage::Binary(bytes))) => return Ok(Some(bytes.to_vec())),
+                Some(Ok(WsMessage::Text(_))) => {
+                    return Err(HostError::Channel("unexpected text frame".into()))
+                }
+                Some(Ok(_)) => continue,
+                Some(Err(error)) => return Err(HostError::Channel(error.to_string())),
+            }
+        }
+    }
+}
+
+/// Opens the WebSocket to the computer. The TLS certificate pin is an extra layer; what the
+/// phone trusts is the computer's public key, checked by the handshake that follows.
+async fn open(dest: &QrPayload) -> Result<WsFrames, HostError> {
+    require_lan_host(&dest.host)?;
+    let config = pinned_tls_config(&dest.fingerprint)?;
+    let url = format!("wss://{}:{}/v2/channel", dest.host, dest.port);
+    let connect = tokio_tungstenite::connect_async_tls_with_config(
+        url,
+        None,
+        true,
+        Some(Connector::Rustls(Arc::new(config))),
+    );
+    match tokio::time::timeout(SHORT_TIMEOUT, connect).await {
+        Ok(Ok((stream, _))) => Ok(WsFrames(stream)),
+        Ok(Err(error)) => Err(ws_connect_error(&dest.host, dest.port, &error)),
+        Err(_) => Err(classify_connect_failure(
+            crate::adapters::lan_ipv4(),
+            dest.host.parse().map_err(|_| HostError::Unreachable)?,
+            dest.port,
+            true,
+        )),
+    }
+}
+
+fn hello(name: &str, pairing_token: Option<String>, pair: bool) -> Hello {
+    Hello {
+        pairing_token,
+        pair,
+        name: name.to_string(),
+    }
+}
+
+/// Asks the computer to trust this phone. Calls `on_code` with the six digits as soon as the
+/// handshake is done, then waits until the user on the computer answers.
+/// `Ok(true)` means the computer accepted.
+pub async fn pair(
+    dest: &QrPayload,
+    keys: &KeyPair,
     name: &str,
-) -> Result<(QrPayload, PairReply), HostError> {
+    pairing_token: Option<String>,
+    on_code: impl FnOnce(String),
+) -> Result<bool, HostError> {
+    let expected = decode_public_key(&dest.pub_key)?;
+    let mut frames = open(dest).await?;
+    let mut established = handshake_initiator(
+        &mut frames,
+        keys,
+        &expected,
+        &hello(name, pairing_token.clone(), true),
+    )
+    .await?;
+    if pairing_token.is_none() {
+        on_code(sas(&established.hash));
+    }
+    let wait = async {
+        loop {
+            match established.session.recv(&mut frames).await? {
+                Some(Msg::Paired) => return Ok(true),
+                Some(Msg::Rejected) | None => return Ok(false),
+                Some(Msg::Error { code }) => return Err(code_error(&code)),
+                Some(_) => continue,
+            }
+        }
+    };
+    tokio::time::timeout(PAIRING_TIMEOUT, wait)
+        .await
+        .unwrap_or(Ok(false))
+}
+
+async fn session_for(
+    dest: &QrPayload,
+    keys: &KeyPair,
+    name: &str,
+) -> Result<(WsFrames, crate::adapters::channel::Session), HostError> {
+    let expected = decode_public_key(&dest.pub_key)?;
+    let mut frames = open(dest).await?;
+    let established =
+        handshake_initiator(&mut frames, keys, &expected, &hello(name, None, false)).await?;
+    Ok((frames, established.session))
+}
+
+async fn expect_ack(
+    frames: &mut WsFrames,
+    session: &mut crate::adapters::channel::Session,
+) -> Result<(), HostError> {
+    match session.recv(frames).await? {
+        Some(Msg::Ack) => Ok(()),
+        Some(Msg::Error { code }) => Err(code_error(&code)),
+        _ => Err(HostError::Unreachable),
+    }
+}
+
+pub async fn send_batch(
+    dest: &QrPayload,
+    keys: &KeyPair,
+    name: &str,
+    batch_id: &BatchId,
+    images: &[Vec<u8>],
+) -> Result<(), HostError> {
+    if images.is_empty() {
+        return Err(HostError::ImageUndecodable);
+    }
+    if images.iter().any(|image| image.len() > MAX_IMAGE_BYTES) {
+        return Err(HostError::ImageTooLarge);
+    }
+    let run = async {
+        let (mut frames, mut session) = session_for(dest, keys, name).await?;
+        session
+            .send(
+                &mut frames,
+                &Msg::BeginImages {
+                    batch_id: batch_id.as_str().to_string(),
+                    count: images.len() as u32,
+                },
+            )
+            .await?;
+        for image in images {
+            session
+                .send(&mut frames, &Msg::Item { size: image.len() as u32 })
+                .await?;
+            session.send_chunks(&mut frames, image).await?;
+        }
+        session.send(&mut frames, &Msg::End).await?;
+        expect_ack(&mut frames, &mut session).await
+    };
+    tokio::time::timeout(UPLOAD_TIMEOUT, run)
+        .await
+        .unwrap_or(Err(HostError::Unreachable))
+}
+
+pub async fn send_text(
+    dest: &QrPayload,
+    keys: &KeyPair,
+    name: &str,
+    batch_id: &BatchId,
+    text: &str,
+) -> Result<(), HostError> {
+    let run = async {
+        let (mut frames, mut session) = session_for(dest, keys, name).await?;
+        session
+            .send(
+                &mut frames,
+                &Msg::BeginText {
+                    batch_id: batch_id.as_str().to_string(),
+                    size: text.len() as u32,
+                },
+            )
+            .await?;
+        session.send_chunks(&mut frames, text.as_bytes()).await?;
+        session.send(&mut frames, &Msg::End).await?;
+        expect_ack(&mut frames, &mut session)
+            .await
+            .map_err(|error| match error {
+                HostError::ImageTooLarge => HostError::TextTooLarge,
+                HostError::ImageUndecodable => HostError::InvalidText,
+                other => other,
+            })
+    };
+    tokio::time::timeout(UPLOAD_TIMEOUT, run)
+        .await
+        .unwrap_or(Err(HostError::Unreachable))
+}
+
+/// Asks a computer at a typed address who it is. Only a starting point: the key it returns is
+/// not authenticated until the user compares the pairing code.
+pub async fn fetch_identity(host: &str, port: u16) -> Result<PcIdentity, HostError> {
     require_lan_host(host)?;
     if port == 0 {
         return Err(HostError::Unreachable);
     }
-    let client = if let Some(fp) = expected_fingerprint.filter(|val| !val.is_empty()) {
-        let qr = QrPayload {
-            v: 1,
-            pc_id: "pc-bootstrap".to_string(),
-            name: "Computer".to_string(),
-            host: host.to_string(),
-            port,
-            token: String::new(),
-            fingerprint: fp.to_string(),
-            cert_der: String::new(),
-            expires_at: String::new(),
-        };
-        pinned_client(&qr, SHORT_TIMEOUT)?
-    } else {
-        bootstrap_client(SHORT_TIMEOUT)?
-    };
-    let response = client
-        .post(format!("https://{host}:{port}/pair/code"))
-        .json(&serde_json::json!({
-            "code": code.trim(),
-            "deviceId": device_id.as_str(),
-            "name": name,
-        }))
+    let response = bootstrap_client(SHORT_TIMEOUT)?
+        .get(format!("https://{host}:{port}/v2/identity"))
         .send()
         .await
         .map_err(|error| connection_error(host, port, &error))?;
     if !response.status().is_success() {
-        return Err(if response.status().as_u16() == 410 {
-            HostError::PairingExpired
-        } else {
-            HostError::Unreachable
-        });
+        return Err(HostError::Unreachable);
     }
-    let body: PairCodeBody = response.json().await.map_err(|_| HostError::Unreachable)?;
-    let pc_id = PcId::parse(&body.pc_id)?;
-    let der = base64::engine::general_purpose::STANDARD
-        .decode(body.cert_der.trim())
-        .map_err(|_| HostError::NotTrusted)?;
-    let actual = crate::adapters::fingerprint(&der);
-    if actual != body.fingerprint.to_ascii_lowercase() {
-        return Err(HostError::NotTrusted);
-    }
-    if let Some(expected) = expected_fingerprint.filter(|val| !val.is_empty()) {
-        if actual != expected.to_ascii_lowercase() {
-            return Err(HostError::NotTrusted);
-        }
-    }
-    let qr = remembered_qr(
-        &pc_id,
-        &body.name,
-        host,
-        port,
-        &actual,
-        body.cert_der.trim(),
-    );
-    let reply = PairReply {
-        status: body.status,
-        poll_token: body.poll_token,
-        secret: body.secret,
-    };
-    Ok((qr, reply))
-}
-
-pub async fn pair_status(
-    qr: &QrPayload,
-    device_id: &DeviceId,
-    poll_token: &str,
-) -> Result<PairReply, HostError> {
-    let client = pinned_client(qr, SHORT_TIMEOUT)?;
-    let response = client
-        .post(format!("https://{}:{}/pair/status", qr.host, qr.port))
-        .json(&serde_json::json!({
-            "deviceId": device_id.as_str(),
-            "pollToken": poll_token,
-        }))
-        .send()
-        .await
-        .map_err(|error| connection_error(&qr.host, qr.port, &error))?;
-    read_pair(response).await
-}
-
-pub async fn send_batch(
-    qr: &QrPayload,
-    device_id: &DeviceId,
-    secret: &str,
-    batch_id: &BatchId,
-    encoded_images: &[String],
-) -> Result<(), HostError> {
-    if encoded_images.is_empty() {
-        return Err(HostError::ImageUndecodable);
-    }
-    let client = pinned_client(qr, UPLOAD_TIMEOUT)?;
-    let response = client
-        .post(format!("https://{}:{}/batches", qr.host, qr.port))
-        .json(&serde_json::json!({
-            "deviceId": device_id.as_str(),
-            "secret": secret,
-            "batchId": batch_id.as_str(),
-            "images": encoded_images,
-        }))
-        .send()
-        .await
-        .map_err(|error| connection_error(&qr.host, qr.port, &error))?;
-    if response.status().is_success() {
-        Ok(())
-    } else if response.status().as_u16() == 403 {
-        Err(HostError::NotTrusted)
-    } else if response.status().as_u16() == 413 {
-        Err(HostError::ImageTooLarge)
-    } else if response.status().as_u16() == 400 {
-        Err(HostError::ImageUndecodable)
-    } else {
-        Err(HostError::Unreachable)
-    }
-}
-
-pub async fn send_text(
-    qr: &QrPayload,
-    device_id: &DeviceId,
-    secret: &str,
-    batch_id: &BatchId,
-    text: &str,
-) -> Result<(), HostError> {
-    let client = pinned_client(qr, UPLOAD_TIMEOUT)?;
-    let response = client
-        .post(format!("https://{}:{}/texts", qr.host, qr.port))
-        .json(&serde_json::json!({
-            "deviceId": device_id.as_str(),
-            "secret": secret,
-            "batchId": batch_id.as_str(),
-            "text": text,
-        }))
-        .send()
-        .await
-        .map_err(|error| connection_error(&qr.host, qr.port, &error))?;
-    match response.status().as_u16() {
-        200..=299 => Ok(()),
-        403 => Err(HostError::NotTrusted),
-        413 => Err(HostError::TextTooLarge),
-        400 => Err(HostError::InvalidText),
-        _ => Err(HostError::Unreachable),
-    }
+    response.json().await.map_err(|_| HostError::Unreachable)
 }
 
 pub async fn ready(qr: &QrPayload) -> bool {
@@ -279,17 +322,17 @@ pub fn remembered_qr(
     host: &str,
     port: u16,
     fingerprint: &str,
-    cert_der: &str,
+    pub_key: &str,
 ) -> QrPayload {
     QrPayload {
-        v: 1,
+        v: 2,
         pc_id: pc_id.as_str().to_string(),
         name: name.to_string(),
         host: host.to_string(),
         port,
         token: String::new(),
         fingerprint: fingerprint.to_string(),
-        cert_der: cert_der.to_string(),
+        pub_key: pub_key.to_string(),
         expires_at: String::new(),
     }
 }
@@ -439,6 +482,24 @@ pub fn verify_peer_leaf(expected_fingerprint: &str, peer_leaf_der: &[u8]) -> Res
         .map_err(|_| HostError::NotTrusted)
 }
 
+fn pinned_tls_config(fingerprint: &str) -> Result<rustls::ClientConfig, HostError> {
+    let expected = fingerprint.to_ascii_lowercase();
+    if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(HostError::NotTrusted);
+    }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let verifier = Arc::new(PinnedVerifier {
+        fingerprint: expected,
+        provider: provider.clone(),
+    });
+    Ok(rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|_| HostError::Unreachable)?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth())
+}
+
 fn pinned_client(qr: &QrPayload, timeout: Duration) -> Result<reqwest::Client, HostError> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
@@ -446,38 +507,14 @@ fn pinned_client(qr: &QrPayload, timeout: Duration) -> Result<reqwest::Client, H
     static CLIENT_POOL: OnceLock<Mutex<HashMap<(String, u64), reqwest::Client>>> = OnceLock::new();
 
     require_lan_host(&qr.host)?;
-    let expected = qr.fingerprint.to_ascii_lowercase();
-    if expected.len() != 64 || !expected.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(HostError::NotTrusted);
-    }
-    if !qr.cert_der.trim().is_empty() {
-        let der = base64::engine::general_purpose::STANDARD
-            .decode(qr.cert_der.trim())
-            .map_err(|_| HostError::NotTrusted)?;
-        if crate::adapters::fingerprint(&der) != expected {
-            return Err(HostError::NotTrusted);
-        }
-    }
-
-    let pool_key = (expected.clone(), timeout.as_millis() as u64);
+    let tls_config = pinned_tls_config(&qr.fingerprint)?;
+    let pool_key = (qr.fingerprint.to_ascii_lowercase(), timeout.as_millis() as u64);
     let pool = CLIENT_POOL.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(guard) = pool.lock() {
         if let Some(cached) = guard.get(&pool_key) {
             return Ok(cached.clone());
         }
     }
-
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
-    let verifier = Arc::new(PinnedVerifier {
-        fingerprint: expected,
-        provider: provider.clone(),
-    });
-    let tls_config = rustls::ClientConfig::builder_with_provider(provider)
-        .with_safe_default_protocol_versions()
-        .map_err(|_| HostError::Unreachable)?
-        .dangerous()
-        .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth();
     let client = reqwest::Client::builder()
         .use_preconfigured_tls(tls_config)
         .tcp_nodelay(true)
@@ -485,27 +522,10 @@ fn pinned_client(qr: &QrPayload, timeout: Duration) -> Result<reqwest::Client, H
         .timeout(timeout)
         .build()
         .map_err(|_| HostError::Unreachable)?;
-
     if let Ok(mut guard) = pool.lock() {
         guard.insert(pool_key, client.clone());
     }
     Ok(client)
-}
-
-async fn read_pair(response: reqwest::Response) -> Result<PairReply, HostError> {
-    if !response.status().is_success() {
-        return Err(if response.status().as_u16() == 410 {
-            HostError::PairingExpired
-        } else {
-            HostError::Unreachable
-        });
-    }
-    let body: PairBody = response.json().await.map_err(|_| HostError::Unreachable)?;
-    Ok(PairReply {
-        status: body.status,
-        poll_token: body.poll_token,
-        secret: body.secret,
-    })
 }
 
 #[cfg(test)]
@@ -514,7 +534,6 @@ mod tests {
 
     use axum::routing::get;
     use axum::{Json, Router};
-    use base64::Engine;
 
     use super::{ready, remembered_qr};
     use crate::adapters::fingerprint;
@@ -563,7 +582,7 @@ mod tests {
             "127.0.0.1",
             port,
             &server_fp,
-            &base64::engine::general_purpose::STANDARD.encode(&server_der),
+            "",
         );
         assert!(ready(&matching).await);
 
@@ -573,7 +592,7 @@ mod tests {
             "127.0.0.1",
             port,
             &other_fp,
-            &base64::engine::general_purpose::STANDARD.encode(&other_der),
+            "",
         );
         assert!(!ready(&wrong_peer).await);
         assert!(super::verify_peer_leaf(&server_fp, &server_der).is_ok());
@@ -596,7 +615,7 @@ mod tests {
             "127.0.0.1",
             ca_port,
             &fingerprint(ca_cert.der()),
-            &base64::engine::general_purpose::STANDARD.encode(ca_cert.der()),
+            "",
         );
         assert!(!ready(&ca_qr).await);
     }

@@ -150,12 +150,13 @@ export const en = {
   offline:
     "The computer is offline. Open Fast Share on it and check that both devices are on the same Wi-Fi.",
   scanQr: "Scan QR",
-  pairCodeLabel: "6-digit code",
-  pairCodePlaceholder: "6-digit code",
-  pairCodeHint: "Type this code on your phone to pair.",
+  connect: "Connect",
+  connectToAddress: "Connect to address",
+  compareCodeHint: "Accept on the computer only if it shows the same code.",
+  compareCodeOnComputer: (code: string) =>
+    `Code ${code}. Accept only if your phone shows the same code.`,
   lanAddressLabel: "Computer address (only if auto-detect fails)",
   lanAddressPlaceholder: "e.g. 192.168.1.24:47654",
-  pairWithCodeButton: "Pair with code",
   nearbyOnWifi: "Nearby computers",
   refreshNearby: "Refresh",
   firewallPublicWarning:
@@ -178,7 +179,6 @@ export const en = {
   waitAcceptHint: "Accept the request on your computer to finish pairing.",
   pairingCancelled: "Pairing cancelled. You can scan again whenever you're ready.",
   rejected: "The computer rejected this phone.",
-  needsForgetOnComputer: "Forget this phone on the computer first, then scan again.",
   knownComputers: "Computers",
   noComputers: "Scan a computer QR code to pair.",
   forgetComputer: (name: string) => `Forget ${name}?`,

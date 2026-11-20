@@ -4,10 +4,11 @@ use base64::Engine;
 use serde::Serialize;
 use tauri_plugin_opener::OpenerExt;
 
+use crate::adapters::keys::{decode_public_key, KeyPair};
 use crate::adapters::phone_client::{self, remembered_qr};
 use crate::domain::{
-    validate_text, BatchId, DeviceId, DeviceTrust, HostError, ImageId, PcId, QrPayload, TextId,
-    MAX_IMAGE_BYTES,
+    parse_qr, validate_text, BatchId, DeviceId, DeviceTrust, HostError, ImageId, PcId, QrPayload,
+    TextId, MAX_IMAGE_BYTES,
 };
 use crate::ports::{Clipboard, Store};
 use crate::runtime::{qr_png, DockEdge, SharedHost, WindowPrefs};
@@ -29,6 +30,8 @@ pub(crate) struct PhoneView {
     id: String,
     name: String,
     trust: String,
+    /// Six digits to compare with the phone's screen, when it asked without a QR code.
+    sas: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -38,7 +41,6 @@ pub(crate) struct HostStatus {
     pc_name: String,
     retention_days: u32,
     qr_png_base64: String,
-    pair_code: String,
     lan_address: String,
     firewall_warning: Option<String>,
     pending: Vec<PhoneView>,
@@ -109,6 +111,8 @@ pub(crate) struct DestinationView {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PairView {
     status: String,
+    /// Six digits to compare with the computer's screen while waiting.
+    sas: Option<String>,
 }
 
 #[tauri::command]
@@ -485,7 +489,6 @@ pub(crate) fn host_status(state: tauri::State<'_, SharedHost>) -> Result<HostSta
     let settings = host.store.load_settings().map_err(text_err)?;
     let phones = host.store.list_phones().map_err(text_err)?;
     let payload = host.qr_payload().map_err(text_err)?;
-    let pair_code = host.ticket.code.clone();
     let lan_address = format!("{}:{}", payload.host, payload.port);
     let png = qr_png(&payload).map_err(text_err)?;
     let pending = phones
@@ -502,7 +505,6 @@ pub(crate) fn host_status(state: tauri::State<'_, SharedHost>) -> Result<HostSta
         pc_name: settings.pc_display_name,
         retention_days: settings.history_retention_days,
         qr_png_base64: base64::engine::general_purpose::STANDARD.encode(png),
-        pair_code,
         lan_address,
         firewall_warning: crate::adapters::firewall_warning(),
         pending,
@@ -853,73 +855,155 @@ pub(crate) async fn pair_with_qr(
     state: tauri::State<'_, SharedHost>,
     payload: String,
 ) -> Result<PairView, String> {
-    let (device_id, name) = {
-        let host = state.lock().map_err(text_err)?;
-        (host.phone.device_id.clone(), host.phone.name.clone())
-    };
-    let (qr, reply) = phone_client::pair(&payload, &device_id, &name)
-        .await
-        .map_err(text_err)?;
-    save_paired_pc(&state, qr, reply)
+    let qr = parse_qr(&payload).map_err(text_err)?;
+    let token = Some(qr.token.clone());
+    start_pairing(state.inner().clone(), qr, token)
 }
 
+/// Connects to a computer without a QR code. Either `pc_id` of a computer found on the Wi-Fi, or
+/// a typed `address`. The computer is not authenticated yet: the user compares the six digits.
 #[tauri::command]
-pub(crate) async fn pair_with_code(
+pub(crate) async fn pair_nearby(
     state: tauri::State<'_, SharedHost>,
-    code: String,
+    pc_id: Option<String>,
     address: Option<String>,
 ) -> Result<PairView, String> {
-    let trimmed_code = code.trim().to_string();
-    if trimmed_code.len() != 6 || !trimmed_code.chars().all(|c| c.is_ascii_digit()) {
-        return Err(HostError::PairingExpired.to_string());
-    }
-    let (device_id, name) = {
-        let host = state.lock().map_err(text_err)?;
-        (host.phone.device_id.clone(), host.phone.name.clone())
-    };
     let manual = address
         .map(|val| val.trim().to_string())
         .filter(|val| !val.is_empty());
-    if let Some(addr) = manual {
-        let (host_str, port) = parse_host_port(&addr).map_err(text_err)?;
-        let (qr, reply) = phone_client::pair_with_code_endpoint(
-            &host_str,
-            port,
-            None,
-            &trimmed_code,
-            &device_id,
-            &name,
-        )
-        .await
-        .map_err(text_err)?;
-        return save_paired_pc(&state, qr, reply);
-    }
-
-    let discovered =
-        tokio::task::spawn_blocking(|| crate::adapters::browse_hosts(Duration::from_millis(900)))
+    let dest = if let Some(addr) = manual {
+        let (host, port) = parse_host_port(&addr).map_err(text_err)?;
+        let identity = phone_client::fetch_identity(&host, port)
             .await
-            .unwrap_or_default();
-    if discovered.is_empty() {
-        return Err(HostError::MulticastFiltered.to_string());
-    }
-    let mut last_error = HostError::Unreachable;
-    for candidate in discovered {
-        let fp = (!candidate.fingerprint.is_empty()).then_some(candidate.fingerprint.as_str());
-        match phone_client::pair_with_code_endpoint(
-            &candidate.host,
-            candidate.port,
-            fp,
-            &trimmed_code,
-            &device_id,
-            &name,
-        )
+            .map_err(text_err)?;
+        let id = PcId::parse(&identity.pc_id).map_err(text_err)?;
+        remembered_qr(&id, &identity.name, &host, port, &identity.fingerprint, &identity.pub_key)
+    } else {
+        let wanted = PcId::parse(pc_id.ok_or_else(|| HostError::NotFound.to_string())?)
+            .map_err(text_err)?;
+        let discovered = tokio::task::spawn_blocking(|| {
+            crate::adapters::browse_hosts(Duration::from_millis(900))
+        })
         .await
-        {
-            Ok((qr, reply)) => return save_paired_pc(&state, qr, reply),
-            Err(error) => last_error = error,
+        .unwrap_or_default();
+        if discovered.is_empty() {
+            return Err(HostError::MulticastFiltered.to_string());
         }
+        let found = discovered
+            .into_iter()
+            .find(|item| item.pc_id == wanted.as_str())
+            .ok_or_else(|| HostError::Unreachable.to_string())?;
+        remembered_qr(
+            &wanted,
+            &found.name,
+            &found.host,
+            found.port,
+            &found.fingerprint,
+            &found.public_key,
+        )
+    };
+    decode_public_key(&dest.pub_key).map_err(text_err)?;
+    start_pairing(state.inner().clone(), dest, None)
+}
+
+/// Records the computer as "pending" and runs the handshake in the background, because the user
+/// on the computer can take up to two minutes. The phone polls `poll_pair`.
+fn start_pairing(
+    shared: SharedHost,
+    dest: QrPayload,
+    token: Option<String>,
+) -> Result<PairView, String> {
+    let pc_id = PcId::parse(&dest.pc_id).map_err(text_err)?;
+    let (keys, name) = {
+        let mut host = shared.lock().map_err(text_err)?;
+        host.known_pcs.retain(|pc| pc.pc_id != pc_id);
+        host.known_pcs.insert(
+            0,
+            crate::runtime::KnownPc {
+                pc_id: pc_id.clone(),
+                name: dest.name.clone(),
+                host: dest.host.clone(),
+                port: dest.port,
+                fingerprint: dest.fingerprint.clone(),
+                public_key: None,
+                pending: true,
+                sas: None,
+                failure: None,
+            },
+        );
+        host.save_phone_book().map_err(text_err)?;
+        (host.keys.clone(), host.phone.name.clone())
+    };
+    tauri::async_runtime::spawn(async move {
+        let on_code = {
+            let (shared, pc_id) = (shared.clone(), pc_id.clone());
+            move |code: String| update_known_pc(&shared, &pc_id, |pc| pc.sas = Some(code))
+        };
+        let outcome = phone_client::pair(&dest, &keys, &name, token, on_code).await;
+        update_known_pc(&shared, &pc_id, |pc| {
+            pc.pending = false;
+            pc.sas = None;
+            match &outcome {
+                Ok(true) => pc.public_key = Some(dest.pub_key.clone()),
+                Ok(false) => {}
+                Err(error) => pc.failure = Some(error.to_string()),
+            }
+        });
+    });
+    Ok(PairView {
+        status: "pending".to_string(),
+        sas: None,
+    })
+}
+
+fn update_known_pc(
+    shared: &SharedHost,
+    pc_id: &PcId,
+    change: impl FnOnce(&mut crate::runtime::KnownPc),
+) {
+    if let Ok(mut host) = shared.lock() {
+        if let Some(pc) = host.known_pcs.iter_mut().find(|pc| &pc.pc_id == pc_id) {
+            change(pc);
+        }
+        let _ = host.save_phone_book();
     }
-    Err(last_error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn poll_pair(
+    state: tauri::State<'_, SharedHost>,
+    pc_id: String,
+) -> Result<PairView, String> {
+    let id = PcId::parse(pc_id).map_err(text_err)?;
+    let mut host = state.lock().map_err(text_err)?;
+    let pc = host
+        .known_pcs
+        .iter()
+        .find(|pc| pc.pc_id == id)
+        .ok_or_else(|| HostError::NotFound.to_string())?;
+    if pc.public_key.is_some() {
+        return Ok(PairView {
+            status: "trusted".to_string(),
+            sas: None,
+        });
+    }
+    if pc.pending {
+        return Ok(PairView {
+            status: "pending".to_string(),
+            sas: pc.sas.clone(),
+        });
+    }
+    // The attempt is over without a trusted key: report why once, then forget the entry.
+    let failure = pc.failure.clone();
+    host.known_pcs.retain(|pc| pc.pc_id != id);
+    host.save_phone_book().map_err(text_err)?;
+    match failure {
+        Some(message) => Err(message),
+        None => Ok(PairView {
+            status: "rejected".to_string(),
+            sas: None,
+        }),
+    }
 }
 
 #[tauri::command]
@@ -942,7 +1026,7 @@ pub(crate) async fn discover_nearby_pcs(
         .map(|item| {
             let paired = known
                 .iter()
-                .any(|pc| pc.pc_id.as_str() == item.pc_id && pc.secret.is_some());
+                .any(|pc| pc.pc_id.as_str() == item.pc_id && pc.public_key.is_some());
             NearbyPcView {
                 pc_id: item.pc_id,
                 name: item.name,
@@ -969,100 +1053,16 @@ fn parse_host_port(input: &str) -> Result<(String, u16), HostError> {
     Ok((trimmed.to_string(), 47654))
 }
 
-fn save_paired_pc(
-    state: &tauri::State<'_, SharedHost>,
-    qr: crate::domain::QrPayload,
-    reply: phone_client::PairReply,
-) -> Result<PairView, String> {
-    let mut host = state.lock().map_err(text_err)?;
-    let pc_id = PcId::parse(&qr.pc_id).map_err(text_err)?;
-    let previous_secret = host
-        .known_pcs
-        .iter()
-        .find(|pc| pc.pc_id == pc_id)
-        .and_then(|pc| pc.secret.clone());
-    let resolved_secret = if reply.status == "trusted" {
-        reply.secret.clone().or(previous_secret)
-    } else {
-        None
-    };
-    let status = if reply.status == "trusted" && resolved_secret.is_none() {
-        "needs_forget".to_string()
-    } else {
-        reply.status
-    };
-    host.known_pcs.retain(|pc| pc.pc_id != pc_id);
-    if status != "needs_forget" {
-        host.known_pcs.insert(
-            0,
-            crate::runtime::KnownPc {
-                pc_id,
-                name: qr.name.clone(),
-                host: qr.host.clone(),
-                port: qr.port,
-                fingerprint: qr.fingerprint.clone(),
-                cert_der: qr.cert_der.clone(),
-                secret: resolved_secret,
-                poll_token: if status == "pending" {
-                    reply.poll_token.clone()
-                } else {
-                    None
-                },
-            },
-        );
-    }
-    host.save_phone_book().map_err(text_err)?;
-    Ok(PairView { status })
-}
-
-#[tauri::command]
-pub(crate) async fn poll_pair(
-    state: tauri::State<'_, SharedHost>,
-    pc_id: String,
-) -> Result<PairView, String> {
-    let (device_id, qr, poll_token) = {
-        let host = state.lock().map_err(text_err)?;
-        let id = PcId::parse(pc_id).map_err(text_err)?;
-        let pc = host
-            .known_pcs
-            .iter()
-            .find(|pc| pc.pc_id == id)
-            .ok_or_else(|| HostError::NotFound.to_string())?;
-        let poll_token = pc
-            .poll_token
-            .clone()
-            .ok_or_else(|| HostError::NotTrusted.to_string())?;
-        let qr = remembered_qr(
-            &pc.pc_id,
-            &pc.name,
-            &pc.host,
-            pc.port,
-            &pc.fingerprint,
-            &pc.cert_der,
-        );
-        (host.phone.device_id.clone(), qr, poll_token)
-    };
-    let reply = phone_client::pair_status(&qr, &device_id, &poll_token)
-        .await
-        .map_err(text_err)?;
-    let mut host = state.lock().map_err(text_err)?;
-    if let Some(pc) = host
-        .known_pcs
-        .iter_mut()
-        .find(|pc| pc.pc_id.as_str() == qr.pc_id)
-    {
-        if reply.status == "trusted" {
-            pc.secret = reply.secret.clone();
-            pc.poll_token = None;
-        } else if reply.status == "rejected" {
-            pc.secret = None;
-            pc.poll_token = None;
-        }
-    }
-    host.save_phone_book().map_err(text_err)?;
-    Ok(PairView {
-        status: reply.status,
-    })
+fn known_destination(pc: &crate::runtime::KnownPc) -> Option<QrPayload> {
+    let key = pc.public_key.as_deref()?;
+    Some(remembered_qr(
+        &pc.pc_id,
+        &pc.name,
+        &pc.host,
+        pc.port,
+        &pc.fingerprint,
+        key,
+    ))
 }
 
 #[tauri::command]
@@ -1082,14 +1082,9 @@ pub(crate) async fn discover_destinations(
     };
     let mut views = Vec::new();
     for pc in pcs {
-        let qr = remembered_qr(
-            &pc.pc_id,
-            &pc.name,
-            &pc.host,
-            pc.port,
-            &pc.fingerprint,
-            &pc.cert_der,
-        );
+        let Some(qr) = known_destination(&pc) else {
+            continue;
+        };
         let online = phone_client::ready(&qr).await;
         views.push(DestinationView {
             pc_id: pc.pc_id.as_str().to_string(),
@@ -1111,7 +1106,7 @@ pub(crate) async fn send_batch(
         return Err(HostError::ImageUndecodable.to_string());
     }
     let parsed_batch_id = BatchId::parse(batch_id).map_err(text_err)?;
-    let mut cleaned = Vec::with_capacity(images.len());
+    let mut decoded = Vec::with_capacity(images.len());
     for image in images {
         let trimmed = image.trim();
         if trimmed.is_empty() {
@@ -1121,12 +1116,15 @@ pub(crate) async fn send_batch(
         if approx_bytes > MAX_IMAGE_BYTES {
             return Err(HostError::ImageTooLarge.to_string());
         }
-        cleaned.push(trimmed.to_string());
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(trimmed)
+            .map_err(|_| HostError::ImageUndecodable.to_string())?;
+        decoded.push(bytes);
     }
     let id = PcId::parse(pc_id).map_err(text_err)?;
-    let (batch, images) = (&parsed_batch_id, &cleaned);
-    deliver_to_pc(&state, &id, move |qr, device_id, secret| async move {
-        phone_client::send_batch(&qr, &device_id, &secret, batch, images).await
+    let (batch, images) = (&parsed_batch_id, &decoded);
+    deliver_to_pc(&state, &id, move |qr, keys, name| async move {
+        phone_client::send_batch(&qr, &keys, &name, batch, images).await
     })
     .await
 }
@@ -1142,8 +1140,8 @@ pub(crate) async fn send_text(
     let parsed_batch_id = BatchId::parse(batch_id).map_err(text_err)?;
     let id = PcId::parse(pc_id).map_err(text_err)?;
     let (batch, body) = (&parsed_batch_id, &text);
-    deliver_to_pc(&state, &id, move |qr, device_id, secret| async move {
-        phone_client::send_text(&qr, &device_id, &secret, batch, body).await
+    deliver_to_pc(&state, &id, move |qr, keys, name| async move {
+        phone_client::send_text(&qr, &keys, &name, batch, body).await
     })
     .await
 }
@@ -1152,35 +1150,25 @@ pub(crate) async fn send_text(
 /// (the computer's IP may have changed) and retries with the updated address.
 async fn deliver_to_pc<F, Fut>(state: &SharedHost, id: &PcId, send: F) -> Result<(), String>
 where
-    F: Fn(QrPayload, DeviceId, String) -> Fut,
+    F: Fn(QrPayload, KeyPair, String) -> Fut,
     Fut: std::future::Future<Output = Result<(), HostError>>,
 {
-    let (device_id, secret, qr) = {
+    let (keys, name, qr) = {
         let host = state.lock().map_err(text_err)?;
         let pc = host
             .known_pcs
             .iter()
             .find(|pc| &pc.pc_id == id)
             .ok_or_else(|| HostError::NotFound.to_string())?;
-        let secret = pc
-            .secret
-            .clone()
-            .ok_or_else(|| HostError::NotTrusted.to_string())?;
-        let qr = remembered_qr(
-            &pc.pc_id,
-            &pc.name,
-            &pc.host,
-            pc.port,
-            &pc.fingerprint,
-            &pc.cert_der,
-        );
-        (host.phone.device_id.clone(), secret, qr)
+        let qr = known_destination(pc).ok_or_else(|| HostError::NotTrusted.to_string())?;
+        (host.keys.clone(), host.phone.name.clone(), qr)
     };
 
-    match send(qr, device_id.clone(), secret.clone()).await {
+    match send(qr, keys.clone(), name.clone()).await {
         Ok(()) => Ok(()),
         Err(
             first_err @ (HostError::Unreachable
+            | HostError::NoServer { .. }
             | HostError::DifferentSubnet { .. }
             | HostError::GuestWifiOrFirewall),
         ) => {
@@ -1200,16 +1188,9 @@ where
                     .iter()
                     .find(|pc| &pc.pc_id == id)
                     .ok_or_else(|| HostError::NotFound.to_string())?;
-                remembered_qr(
-                    &pc.pc_id,
-                    &pc.name,
-                    &pc.host,
-                    pc.port,
-                    &pc.fingerprint,
-                    &pc.cert_der,
-                )
+                known_destination(pc).ok_or_else(|| HostError::NotTrusted.to_string())?
             };
-            send(updated_qr, device_id, secret).await.map_err(text_err)
+            send(updated_qr, keys, name).await.map_err(text_err)
         }
         Err(other_err) => Err(other_err.to_string()),
     }
@@ -1274,7 +1255,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         list_known_pcs,
         forget_pc,
         pair_with_qr,
-        pair_with_code,
+        pair_nearby,
         discover_nearby_pcs,
         allow_firewall,
         poll_pair,
@@ -1296,5 +1277,6 @@ fn phone_view(phone: &crate::domain::PhoneRecord) -> PhoneView {
         id: phone.id.as_str().to_string(),
         name: phone.name.clone(),
         trust: trust.to_string(),
+        sas: phone.sas.clone(),
     }
 }

@@ -12,12 +12,11 @@ pub fn ingest_text(
     clipboard: &impl Clipboard,
     notifier: &impl Notifier,
     device_id: &DeviceId,
-    secret: &str,
     batch_id: BatchId,
     text: &str,
     now: DateTime<Utc>,
 ) -> Result<(), HostError> {
-    let phone = trusted_phone(store, device_id, secret)?;
+    let phone = trusted_phone(store, device_id)?;
     validate_text(text)?;
     if is_stored(store, device_id, &batch_id)? {
         return Ok(());

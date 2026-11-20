@@ -1,4 +1,6 @@
+pub mod channel;
 mod cert;
+pub mod keys;
 mod fs_store;
 mod lan;
 mod mdns;

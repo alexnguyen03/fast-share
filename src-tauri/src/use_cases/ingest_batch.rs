@@ -9,10 +9,9 @@ use crate::ports::{Clipboard, HistoryBatch, ImageRecord, Notifier, Store};
 pub(super) fn trusted_phone(
     store: &impl Store,
     device_id: &DeviceId,
-    secret: &str,
 ) -> Result<PhoneRecord, HostError> {
     let phone = store.get_phone(device_id)?.ok_or(HostError::UnknownPhone)?;
-    if phone.trust != DeviceTrust::Trusted || phone.secret.as_deref() != Some(secret) {
+    if phone.trust != DeviceTrust::Trusted || phone.public_key.is_none() {
         return Err(HostError::NotTrusted);
     }
     Ok(phone)
@@ -32,47 +31,31 @@ pub(super) fn is_stored(
 pub fn authorize_batch(
     store: &impl Store,
     device_id: &DeviceId,
-    secret: &str,
     batch_id: &BatchId,
     image_count: usize,
 ) -> Result<bool, HostError> {
-    trusted_phone(store, device_id, secret)?;
+    trusted_phone(store, device_id)?;
     if image_count == 0 || image_count > MAX_BATCH_IMAGES {
         return Err(HostError::ImageUndecodable);
     }
     is_stored(store, device_id, batch_id)
 }
 
-pub fn decode_batch_images(encoded: &[String]) -> Result<Vec<ValidImage>, HostError> {
-    use base64::Engine;
-
-    if encoded.is_empty() || encoded.len() > MAX_BATCH_IMAGES {
+pub fn decode_batch_images(images: &[Vec<u8>]) -> Result<Vec<ValidImage>, HostError> {
+    if images.is_empty() || images.len() > MAX_BATCH_IMAGES {
         return Err(HostError::ImageUndecodable);
     }
-    if encoded.len() == 1 {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded[0].trim())
-            .map_err(|_| HostError::ImageUndecodable)?;
-        return Ok(vec![validate_image(&bytes)?]);
+    if images.len() == 1 {
+        return Ok(vec![validate_image(&images[0])?]);
     }
-
     std::thread::scope(|scope| {
-        let handles: Vec<_> = encoded
+        let handles: Vec<_> = images
             .iter()
-            .map(|item| {
-                scope.spawn(move || {
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(item.trim())
-                        .map_err(|_| HostError::ImageUndecodable)?;
-                    validate_image(&bytes)
-                })
-            })
+            .map(|bytes| scope.spawn(move || validate_image(bytes)))
             .collect();
-
         let mut validated = Vec::with_capacity(handles.len());
         for handle in handles {
-            let image = handle.join().map_err(|_| HostError::ImageUndecodable)??;
-            validated.push(image);
+            validated.push(handle.join().map_err(|_| HostError::ImageUndecodable)??);
         }
         Ok(validated)
     })
@@ -83,12 +66,11 @@ pub fn commit_validated_batch(
     clipboard: &impl Clipboard,
     notifier: &impl Notifier,
     device_id: &DeviceId,
-    secret: &str,
     batch_id: BatchId,
     images: &[ValidImage],
     now: DateTime<Utc>,
 ) -> Result<(), HostError> {
-    if authorize_batch(store, device_id, secret, &batch_id, images.len())? {
+    if authorize_batch(store, device_id, &batch_id, images.len())? {
         return Ok(());
     }
     let phone = store.get_phone(device_id)?.ok_or(HostError::UnknownPhone)?;
@@ -136,12 +118,11 @@ pub fn ingest_batch(
     clipboard: &impl Clipboard,
     notifier: &impl Notifier,
     device_id: &DeviceId,
-    secret: &str,
     batch_id: BatchId,
     images: &[Vec<u8>],
     now: DateTime<Utc>,
 ) -> Result<(), HostError> {
-    if authorize_batch(store, device_id, secret, &batch_id, images.len())? {
+    if authorize_batch(store, device_id, &batch_id, images.len())? {
         return Ok(());
     }
     let mut validated = Vec::with_capacity(images.len());
@@ -149,6 +130,6 @@ pub fn ingest_batch(
         validated.push(validate_image(bytes)?);
     }
     commit_validated_batch(
-        store, clipboard, notifier, device_id, secret, batch_id, &validated, now,
+        store, clipboard, notifier, device_id, batch_id, &validated, now,
     )
 }

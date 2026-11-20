@@ -9,6 +9,8 @@ export type PhoneView = {
   id: string;
   name: string;
   trust: "unknown" | "pending" | "trusted" | "forgotten";
+  /** Six digits to compare with the phone, when it asked without a QR code. */
+  sas?: string | null;
 };
 
 export type HostStatus = {
@@ -16,7 +18,6 @@ export type HostStatus = {
   pcName: string;
   retentionDays: number;
   qrPngBase64: string;
-  pairCode: string;
   lanAddress: string;
   firewallWarning: string | null;
   pending: PhoneView[];
@@ -63,7 +64,9 @@ export type Destination = {
 };
 
 export type PairResult = {
-  status: "pending" | "trusted" | "rejected" | "needs_forget";
+  status: "pending" | "trusted" | "rejected";
+  /** Six digits to compare with the computer while waiting. */
+  sas?: string | null;
 };
 
 export type PhoneIdentity = {
@@ -278,7 +281,6 @@ export const api = {
         pcName: preview.settings.pcDisplayName,
         retentionDays: preview.settings.historyRetentionDays,
         qrPngBase64: await samplePng("QR", "#f4f7fb"),
-        pairCode: "482910",
         lanAddress: "192.168.1.24:47654",
         firewallWarning: null,
         pending: preview.phones.filter((phone) => phone.trust === "pending"),
@@ -515,15 +517,16 @@ export const api = {
     return invoke<PairResult>("pair_with_qr", { payload });
   },
 
-  pairWithCode(code: string, address?: string): Promise<PairResult> {
+  /** Connect without a QR code: a computer found on the Wi-Fi, or a typed address. */
+  pairNearby(pcId?: string, address?: string): Promise<PairResult> {
     if (!inTauri()) {
-      if (code.trim().length !== 6) {
-        return Promise.reject(new Error(en.rejected));
-      }
       preview.paired = true;
-      return Promise.resolve({ status: "trusted" });
+      return Promise.resolve({ status: "pending", sas: "482910" });
     }
-    return invoke<PairResult>("pair_with_code", { code, address: address?.trim() || null });
+    return invoke<PairResult>("pair_nearby", {
+      pcId: pcId ?? null,
+      address: address?.trim() || null,
+    });
   },
 
   discoverNearbyPcs(): Promise<NearbyPc[]> {

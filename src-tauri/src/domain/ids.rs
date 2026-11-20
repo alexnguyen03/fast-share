@@ -39,6 +39,14 @@ macro_rules! id_type {
 }
 
 id_type!(DeviceId);
+
+impl DeviceId {
+    /// An id derived from the device's public key, so it cannot be claimed without the key.
+    pub fn from_public_key(public_key: &[u8]) -> Self {
+        use sha2::{Digest, Sha256};
+        Self(hex::encode(Sha256::digest(public_key))[..32].to_string())
+    }
+}
 id_type!(PcId);
 id_type!(BatchId);
 id_type!(ImageId);
