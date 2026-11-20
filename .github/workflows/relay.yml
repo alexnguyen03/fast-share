@@ -1,0 +1,101 @@
+name: Relay
+
+# Builds the self-hosted relay (relay/) for Linux servers. Push a tag like relay-v0.1.0 to publish
+# the binaries as a GitHub release; scripts/install-relay.sh downloads them from there.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "relay/**"
+      - ".github/workflows/relay.yml"
+  push:
+    branches: ["**"]
+    tags: ["relay-v*"]
+    paths:
+      - "relay/**"
+      - ".github/workflows/relay.yml"
+
+concurrency:
+  group: relay-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: relay -> target
+      - run: cargo test --manifest-path relay/Cargo.toml
+
+  build:
+    name: Build ${{ matrix.asset }}
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on Ubuntu 22.04 so the binary runs on glibc 2.35 and newer.
+          - { runner: ubuntu-22.04, asset: linux-x86_64 }
+          - { runner: ubuntu-22.04-arm, asset: linux-aarch64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: relay -> target
+      - run: cargo build --release --manifest-path relay/Cargo.toml
+      - name: Package
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#relay-v}"
+          else
+            version="dev-${GITHUB_SHA::7}"
+          fi
+          name="fast-share-relay-${version}-${{ matrix.asset }}"
+          mkdir "$name"
+          cp relay/target/release/fast-share-relay "$name/"
+          cp docs/relay.md "$name/README.md"
+          cp LICENSE "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          "$name/fast-share-relay" --help | head -3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-${{ matrix.asset }}
+          path: |
+            fast-share-relay-*.tar.gz
+            fast-share-relay-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/relay-v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: relay-*
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" fast-share-relay-* \
+            --verify-tag \
+            --title "Relay ${GITHUB_REF_NAME#relay-v}" \
+            --notes "Self-hosted relay for Linux (x86_64 and aarch64). Install with scripts/install-relay.sh or download the archive for your machine and check it against its .sha256 file. See docs/relay.md."
