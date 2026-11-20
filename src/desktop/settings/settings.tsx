@@ -45,6 +45,7 @@ function DesktopSettingsScreen({
   const debounceRef = React.useRef<number>(0);
   const [relay, setRelay] = React.useState<RelayView | null>(null);
   const [relayText, setRelayText] = React.useState("");
+  const [relayTesting, setRelayTesting] = React.useState(false);
 
   React.useEffect(() => {
     let stop: (() => void) | undefined;
@@ -70,6 +71,18 @@ function DesktopSettingsScreen({
       .catch((error: unknown) => {
         setStatusText(error instanceof Error ? error.message : String(error));
       });
+  }
+
+  function testRelay(): void {
+    setStatusText("");
+    setRelayTesting(true);
+    void api
+      .testRelay()
+      .then((ms) => showToast(en.relayTestOk(ms)))
+      .catch((error: unknown) => {
+        setStatusText(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => setRelayTesting(false));
   }
 
   const relayStatus =
@@ -363,9 +376,19 @@ function DesktopSettingsScreen({
               {en.save}
             </Button>
             {relay?.url ? (
-              <Button variant="outline" className="shrink-0" onClick={() => saveRelay("")}>
-                {en.relayRemove}
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  className="shrink-0"
+                  disabled={relayTesting}
+                  onClick={testRelay}
+                >
+                  {relayTesting ? en.relayTesting : en.relayTest}
+                </Button>
+                <Button variant="outline" className="shrink-0" onClick={() => saveRelay("")}>
+                  {en.relayRemove}
+                </Button>
+              </>
             ) : null}
           </div>
           <p className="text-xs text-muted-foreground">{en.relayHint}</p>

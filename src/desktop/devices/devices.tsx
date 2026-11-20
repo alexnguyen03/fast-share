@@ -7,6 +7,7 @@ import {
   type LanInfo,
   type NearbyPc,
   type PhoneView,
+  type RelayView,
 } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
 import { FirewallWarning } from "../../shared/firewall-warning";
@@ -72,8 +73,10 @@ function DesktopDevicesScreen({
   const [nearby, setNearby] = React.useState<NearbyPc[]>(initialNearby);
   const [lanInfo, setLanInfo] = React.useState<LanInfo>(initialLan);
   const [showQr, setShowQr] = React.useState<boolean>(false);
+  const [relay, setRelay] = React.useState<RelayView | null>(null);
 
   const refresh = React.useCallback(async () => {
+    void api.getRelay().then(setRelay);
     const [nextPhones, nextStatus, nextBatches, nextNearby, nextLan] =
       await Promise.all([
         api.listPhones(),
@@ -92,6 +95,7 @@ function DesktopDevicesScreen({
   React.useEffect(() => {
     let unlisten: (() => void) | null = null;
     let unlistenLan: (() => void) | null = null;
+    let unlistenRelay: (() => void) | null = null;
     void api
       .onDevicePairEvent(() => {
         void refresh();
@@ -106,9 +110,17 @@ function DesktopDevicesScreen({
       .then((stop) => {
         unlistenLan = stop;
       });
+    void api
+      .onRelayChanged(() => {
+        void refresh();
+      })
+      .then((stop) => {
+        unlistenRelay = stop;
+      });
     return () => {
       unlisten?.();
       unlistenLan?.();
+      unlistenRelay?.();
     };
   }, [refresh]);
 
@@ -297,6 +309,19 @@ function DesktopDevicesScreen({
             />
             <p className="text-sm font-medium">{status.pcName}</p>
             <p className="text-sm text-muted-foreground">{status.lanAddress}</p>
+            {relay?.url ? (
+              <p
+                className={
+                  relay.status.state === "connected"
+                    ? "text-center text-xs font-medium text-primary"
+                    : "text-center text-xs font-medium text-destructive"
+                }
+              >
+                {relay.status.state === "connected"
+                  ? en.relayReadyForQr
+                  : en.relayNotReadyForQr}
+              </p>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               {`${en.lanThisDevice}: ${lanInfo.ip}  ·  ${en.lanSubnet}: ${lanInfo.subnet}`}
             </p>

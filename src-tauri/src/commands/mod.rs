@@ -131,6 +131,23 @@ fn relay_view(host: &crate::runtime::HostInner) -> RelayView {
     }
 }
 
+/// Sends a probe to this computer through its own relay and reports how long it took.
+#[tauri::command]
+pub(crate) async fn test_relay(state: tauri::State<'_, SharedHost>) -> Result<u64, String> {
+    let (info, public_key) = {
+        let host = state.lock().map_err(text_err)?;
+        let info = host
+            .relay
+            .clone()
+            .ok_or_else(|| HostError::InvalidRelay.to_string())?;
+        (info, host.keys.public.clone())
+    };
+    phone_client::test_relay(&info, &public_key)
+        .await
+        .map(|ms| ms as u64)
+        .map_err(text_err)
+}
+
 #[tauri::command]
 pub(crate) fn get_relay(state: tauri::State<'_, SharedHost>) -> Result<RelayView, String> {
     let host = state.lock().map_err(text_err)?;
@@ -1293,6 +1310,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         host_status,
         get_relay,
         set_relay,
+        test_relay,
         lan_info,
         list_phones,
         accept_phone,
