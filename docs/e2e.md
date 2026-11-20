@@ -1,6 +1,6 @@
 # End-to-end encryption and threat model
 
-Status: **LAN channel implemented (phone to PC), relay and encryption at rest not yet.** `protocol.md` describes the shipped wire format. It needs an internal security review (see Review) before any release.
+Status: **LAN channel and relay implemented (phone to PC), encryption at rest not yet.** `protocol.md` describes the shipped wire format. It needs an internal security review (see Review) before any release.
 
 Goal: the same security model on the LAN and through a relay, so that no server, network, or Wi-Fi neighbour has to be trusted with user data. Images and text are exchanged between two devices that hold each other's public keys. A relay only moves ciphertext. Data stored on the desktop is encrypted at rest.
 
@@ -138,6 +138,7 @@ An external review is wanted before the project is promoted to companies. It is 
 Ease of use comes first in this version. These are accepted gaps, each with the point where it should be tightened:
 
 - **Private key storage:** the device key (`keys.json`) is a file in the app data directory, not wrapped by Android Keystore or iOS Keychain yet. Tighten before a public release.
+- **Relay token in the QR:** the QR carries the relay token, so a photographed QR gives relay access (not data access). Per-device relay tokens would close this.
 - **Linux without a credential store:** the data key is a file next to the data (see Encryption at rest). Tighten by requiring the credential store or a passphrase before promoting the app to companies.
 - **Key backup:** losing a device key means pairing again; there is no recovery. Fine while the user base is small.
 - **Relay metadata:** a relay operator sees who talks to whom, when, and how much (see Threat model).

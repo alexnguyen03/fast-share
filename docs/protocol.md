@@ -14,7 +14,7 @@ The computer listens on HTTPS (a self-signed certificate) on a private RFC1918 L
 
 - `GET /ready` answers `{ "ok": true }` so a remembered phone can see that the app is open.
 - `GET /v2/identity` answers `{ pcId, name, pubKey, fingerprint }`. It is unauthenticated: it only lets a phone start pairing by typed address, and the pairing code is what makes that safe.
-- `GET /v2/channel` upgrades to a WebSocket. Everything else travels inside it as encrypted frames. The phone also pins the certificate fingerprint as an extra layer; nothing depends on it.
+- `GET /v2/channel` upgrades to a WebSocket. Everything else travels inside it as encrypted frames. The phone also pins the certificate fingerprint as an extra layer; nothing depends on it. A computer that has a relay (see `relay.md`) also keeps an outbound WebSocket to it and serves the same channel for each phone the relay announces, so the same handshake runs over either path.
 
 On the channel the phone runs a Noise `XK` handshake (`Noise_XK_25519_ChaChaPoly_SHA256`, prologue `fast-share/2` plus the computer's device id) with the computer's public key it already holds. Its first encrypted payload is a CBOR `Hello { pairingToken?, pair, name }`. After that each WebSocket binary frame is one Noise transport message carrying one CBOR `Msg` (at most 65 519 bytes of plaintext; blobs are split into chunks of 60 000 bytes). The full design and threat model are in `e2e.md`.
 
@@ -22,11 +22,11 @@ On the channel the phone runs a Noise `XK` handshake (`Noise_XK_25519_ChaChaPoly
 
 The computer must accept a phone before any content is stored. A phone whose key is not on the computer's list can ask to pair (`Hello.pair = true`); a plain send from an unknown key is refused at once with `not-trusted`.
 
-**A. QR code.** The computer shows a QR code with JSON version 2: `pcId`, `name`, `host` and `port` (a private IPv4 address on the LAN; loopback only on the same machine), `token` (one-time, expires 10 minutes after it is issued), `fingerprint` (certificate pin), `pubKey` (the computer's public key) and `expiresAt`. The phone rejects the payload when the host is not a LAN address, the key is not 32 bytes, or it is expired. The phone sends the token in `Hello`; a wrong, used or expired token is refused. The computer then asks the user to accept.
+**A. QR code.** The computer shows a QR code with JSON version 2: `pcId`, `name`, `host` and `port` (a private IPv4 address on the LAN; loopback only on the same machine), `token` (one-time, expires 10 minutes after it is issued), `fingerprint` (certificate pin), `pubKey` (the computer's public key), optionally `relay` (`{ url, fingerprint?, token? }`) and `expiresAt`. The phone rejects the payload when the host is not a LAN address, the key is not 32 bytes, or it is expired. The phone sends the token in `Hello`; a wrong, used or expired token is refused. The computer then asks the user to accept.
 
 **B. Nearby, no QR.** The phone takes the computer's key from mDNS (or from `/v2/identity` for a typed address). Because that key is not authenticated, both screens show a six-digit code computed from the handshake hash, and the user accepts on the computer only if the codes match. A mismatch means someone is in the middle: the user rejects and nothing is stored.
 
-In both cases the computer sends `paired` or `rejected` over the same open channel; the phone waits up to two minutes. Requests that are not answered in two minutes are dropped. At most 5 requests wait at once, and one address may start at most 10 pairing attempts a minute.
+In both cases the computer sends `paired` (followed by `relay` when it has one, so the phone can reach it later from outside the Wi-Fi) or `rejected` over the same open channel; the phone waits up to two minutes. Requests that are not answered in two minutes are dropped. At most 5 requests wait at once, and one address may start at most 10 pairing attempts a minute.
 
 The desktop Devices screen and the phone Devices screen both show this device's IPv4 address, `/24` subnet, and usable interface list so a subnet mismatch is visible before pairing. When a connection fails, the phone reports the specific cause:
 - Different subnet / double NAT when the phone IPv4 and computer IPv4 are on different `/24` networks. The error names both addresses. Cellular / `rmnet` interfaces are ignored when choosing the phone's LAN IP.
