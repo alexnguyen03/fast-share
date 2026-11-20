@@ -1,3 +1,5 @@
+import { BUILD } from "../build-info";
+
 export const en = {
   appName: "Fast Share",
   recently: "Recently",
@@ -47,7 +49,8 @@ export const en = {
   deviceRequestToast: (name: string) => `${name} wants to pair`,
   appInfo: "App info",
   appVersionLabel: "Version",
-  appVersionValue: "0.1.0",
+  appVersionValue: BUILD.version,
+  appBuildLabel: "Build",
   appAuthorLabel: "Author",
   appAuthorValue: "AlexWyn",
   appearance: "Appearance",
