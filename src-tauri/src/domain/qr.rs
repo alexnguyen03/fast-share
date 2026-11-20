@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::error::HostError;
 use super::ids::PcId;
+use super::relay::RelayInfo;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -20,6 +21,9 @@ pub struct QrPayload {
     pub fingerprint: String,
     /// The desktop's X25519 public key (standard base64). This is what the phone trusts.
     pub pub_key: String,
+    /// Where to reach the computer from outside the Wi-Fi, when it has a relay.
+    #[serde(default)]
+    pub relay: Option<RelayInfo>,
     pub expires_at: String,
 }
 
@@ -31,6 +35,9 @@ pub fn parse_qr(text: &str) -> Result<QrPayload, HostError> {
     PcId::parse(&payload.pc_id)?;
     super::settings::validate_name(&payload.name)?;
     require_lan_host(&payload.host)?;
+    if let Some(relay) = &payload.relay {
+        relay.validate()?;
+    }
     if payload.port == 0 {
         return Err(HostError::Unreachable);
     }

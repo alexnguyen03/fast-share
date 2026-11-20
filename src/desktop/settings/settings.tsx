@@ -1,6 +1,6 @@
 import * as React from "react";
 import { ChevronLeft, Moon, Sun } from "lucide-react";
-import { api } from "../../shared/commands";
+import { api, type RelayView } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
 import { cn } from "../../shared/lib/utils";
 import {
@@ -43,6 +43,41 @@ function DesktopSettingsScreen({
   );
   const [statusText, setStatusText] = React.useState("");
   const debounceRef = React.useRef<number>(0);
+  const [relay, setRelay] = React.useState<RelayView | null>(null);
+  const [relayText, setRelayText] = React.useState("");
+
+  React.useEffect(() => {
+    let stop: (() => void) | undefined;
+    const reload = (): void => {
+      void api.getRelay().then(setRelay);
+    };
+    reload();
+    void api.onRelayChanged(reload).then((unlisten) => {
+      stop = unlisten;
+    });
+    return () => stop?.();
+  }, []);
+
+  function saveRelay(text: string): void {
+    setStatusText("");
+    void api
+      .setRelay(text)
+      .then((next) => {
+        setRelay(next);
+        setRelayText("");
+        showToast(text.trim() ? en.relaySaved : en.relayRemoved);
+      })
+      .catch((error: unknown) => {
+        setStatusText(error instanceof Error ? error.message : String(error));
+      });
+  }
+
+  const relayStatus =
+    relay?.status.state === "connected"
+      ? en.relayConnected
+      : relay?.status.state === "error"
+        ? en.relayError(relay.status.message)
+        : en.relayConnecting;
 
   const savePatch = React.useCallback((patch: Partial<Settings>, notify = false) => {
     setStatusText("");
@@ -304,6 +339,36 @@ function DesktopSettingsScreen({
               onClick={(e) => e.stopPropagation()}
             />
           </div>
+        </Card>
+
+        <Card className="flex flex-col gap-2 bg-muted p-3">
+          <span className="text-sm font-medium text-foreground">{en.relayTitle}</span>
+          <p className="text-xs text-muted-foreground">
+            {relay?.url ? `${relay.url} · ${relayStatus}` : en.relayNone}
+          </p>
+          <div className="flex items-center gap-2">
+            <Input
+              type="text"
+              value={relayText}
+              placeholder={en.relayPlaceholder}
+              aria-label={en.relayTitle}
+              onChange={(event) => setRelayText(event.target.value)}
+            />
+            <Button
+              variant="secondary"
+              className="shrink-0"
+              disabled={relayText.trim().length === 0}
+              onClick={() => saveRelay(relayText)}
+            >
+              {en.save}
+            </Button>
+            {relay?.url ? (
+              <Button variant="outline" className="shrink-0" onClick={() => saveRelay("")}>
+                {en.relayRemove}
+              </Button>
+            ) : null}
+          </div>
+          <p className="text-xs text-muted-foreground">{en.relayHint}</p>
         </Card>
 
         {statusText ? (

@@ -115,6 +115,64 @@ pub(crate) struct PairView {
     sas: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RelayView {
+    url: Option<String>,
+    has_token: bool,
+    status: crate::runtime::RelayStatus,
+}
+
+fn relay_view(host: &crate::runtime::HostInner) -> RelayView {
+    RelayView {
+        url: host.relay.as_ref().map(|relay| relay.url.clone()),
+        has_token: host.relay.as_ref().is_some_and(|relay| relay.token.is_some()),
+        status: host.relay_status.clone(),
+    }
+}
+
+#[tauri::command]
+pub(crate) fn get_relay(state: tauri::State<'_, SharedHost>) -> Result<RelayView, String> {
+    let host = state.lock().map_err(text_err)?;
+    Ok(relay_view(&host))
+}
+
+/// Saves the relay string the admin pasted (empty text removes the relay) and reconnects.
+#[tauri::command]
+pub(crate) fn set_relay(
+    state: tauri::State<'_, SharedHost>,
+    app: tauri::AppHandle,
+    text: String,
+) -> Result<RelayView, String> {
+    let trimmed = text.trim();
+    let info = if trimmed.is_empty() {
+        None
+    } else {
+        Some(crate::domain::RelayInfo::parse(trimmed).map_err(text_err)?)
+    };
+    {
+        let mut host = state.lock().map_err(text_err)?;
+        let path = host.data_dir.join("relay.json");
+        match &info {
+            Some(info) => {
+                let json = serde_json::to_string(info).map_err(|error| error.to_string())?;
+                crate::adapters::write_private_bytes(&path, json.as_bytes()).map_err(text_err)?;
+            }
+            None => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        host.relay = info.clone();
+        host.relay_generation += 1;
+        host.relay_status = crate::runtime::RelayStatus::Off;
+    }
+    if info.is_some() && !cfg!(any(target_os = "android", target_os = "ios")) {
+        crate::runtime::spawn_relay(state.inner().clone(), app);
+    }
+    let host = state.lock().map_err(text_err)?;
+    Ok(relay_view(&host))
+}
+
 #[tauri::command]
 pub(crate) fn surface() -> &'static str {
     if cfg!(any(target_os = "ios", target_os = "android")) {
@@ -929,6 +987,7 @@ fn start_pairing(
                 pending: true,
                 sas: None,
                 failure: None,
+                relay: dest.relay.clone(),
             },
         );
         host.save_phone_book().map_err(text_err)?;
@@ -944,8 +1003,14 @@ fn start_pairing(
             pc.pending = false;
             pc.sas = None;
             match &outcome {
-                Ok(true) => pc.public_key = Some(dest.pub_key.clone()),
-                Ok(false) => {}
+                Ok(done) if done.accepted => {
+                    pc.public_key = Some(dest.pub_key.clone());
+                    // The computer's own word about its relay wins over what the QR said.
+                    if done.relay.is_some() {
+                        pc.relay = done.relay.clone();
+                    }
+                }
+                Ok(_) => {}
                 Err(error) => pc.failure = Some(error.to_string()),
             }
         });
@@ -1055,14 +1120,9 @@ fn parse_host_port(input: &str) -> Result<(String, u16), HostError> {
 
 fn known_destination(pc: &crate::runtime::KnownPc) -> Option<QrPayload> {
     let key = pc.public_key.as_deref()?;
-    Some(remembered_qr(
-        &pc.pc_id,
-        &pc.name,
-        &pc.host,
-        pc.port,
-        &pc.fingerprint,
-        key,
-    ))
+    let mut dest = remembered_qr(&pc.pc_id, &pc.name, &pc.host, pc.port, &pc.fingerprint, key);
+    dest.relay = pc.relay.clone();
+    Some(dest)
 }
 
 #[tauri::command]
@@ -1231,6 +1291,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         undock_and_drag,
         quit_app,
         host_status,
+        get_relay,
+        set_relay,
         lan_info,
         list_phones,
         accept_phone,
