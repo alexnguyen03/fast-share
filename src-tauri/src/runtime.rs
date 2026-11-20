@@ -14,10 +14,11 @@ use tauri::{Emitter, Manager};
 
 use crate::adapters::channel::{handshake_responder, sas, Established, Frames, Session};
 use crate::adapters::keys::{load_or_create_keys, KeyPair};
+use crate::adapters::phone_client::open_relay;
 use crate::adapters::{lan_ipv4, FsStore, HostCert, OsClipboard, OsNotifier};
 use crate::domain::{
-    BatchId, DeviceId, DeviceTrust, HostError, Hello, Msg, PcId, QrPayload, MAX_IMAGE_BYTES,
-    MAX_TEXT_BYTES,
+    mailbox_for, BatchId, DeviceId, DeviceTrust, HostError, Hello, Msg, PcId, QrPayload,
+    RelayInfo, MAX_IMAGE_BYTES, MAX_TEXT_BYTES,
 };
 use crate::ports::{Clock, Store, SystemClock};
 use crate::use_cases::{
@@ -78,6 +79,12 @@ pub struct HostInner {
     pub pc_id: PcId,
     pub cert: HostCert,
     pub keys: KeyPair,
+    /// The relay this computer is reachable through, when the admin configured one.
+    pub relay: Option<RelayInfo>,
+    /// What the relay connection is doing right now (desktop only).
+    pub relay_status: RelayStatus,
+    /// Bumped whenever the relay setting changes, so an older connection task stops itself.
+    pub relay_generation: u64,
     /// The LAN address the TLS listener is actually bound to. It can differ
     /// from the live `lan_ipv4()` after a network change until the watcher
     /// rebinds, so the QR payload must follow this field, not the live one.
@@ -116,6 +123,9 @@ pub struct KnownPc {
     pub sas: Option<String>,
     #[serde(default)]
     pub failure: Option<String>,
+    /// How to reach this computer from outside the Wi-Fi.
+    #[serde(default)]
+    pub relay: Option<RelayInfo>,
 }
 
 pub fn start(app: tauri::AppHandle) -> Result<(), String> {
@@ -165,6 +175,9 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             fingerprint: cert.fingerprint.clone(),
         },
         keys: keys.clone(),
+        relay: load_relay(&dir),
+        relay_status: RelayStatus::Off,
+        relay_generation: 0,
         bind_ip,
         port,
         server_handle: None,
@@ -178,6 +191,9 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
         let (_, listener) = binding.ok_or_else(|| "no free LAN port".to_string())?;
         spawn_server(shared.clone(), cert_for_server, listener);
         spawn_retention_loop(shared.clone());
+        if shared.lock().is_ok_and(|host| host.relay.is_some()) {
+            spawn_relay(shared.clone(), app.clone());
+        }
         if let Err(error) = crate::adapters::advertise(
             bind_ip,
             &pc_id_text,
@@ -397,7 +413,11 @@ impl Frames for AxumFrames {
 }
 
 async fn serve_channel(shared: SharedHost, socket: WebSocket, peer: IpAddr) {
-    let mut frames = AxumFrames(socket);
+    serve_frames(shared, AxumFrames(socket), peer).await;
+}
+
+/// Serves one phone over any frame stream: the LAN WebSocket or a relay session.
+async fn serve_frames<F: Frames>(shared: SharedHost, mut frames: F, peer: IpAddr) {
     let Ok(keys) = shared.lock().map(|host| host.keys.clone()) else {
         return;
     };
@@ -453,10 +473,10 @@ fn is_trusted(shared: &SharedHost, device_id: &DeviceId, public_key: &[u8]) -> b
 }
 
 /// A key the desktop has never accepted asks to pair. Waits for the user, then tells the phone.
-async fn await_pairing(
+async fn await_pairing<F: Frames>(
     shared: &SharedHost,
     session: &mut Session,
-    frames: &mut AxumFrames,
+    frames: &mut F,
     hello: &Hello,
     remote_public: &[u8],
     hash: &[u8],
@@ -507,7 +527,14 @@ async fn await_pairing(
             .map(|phone| phone.trust);
         match trust {
             Some(DeviceTrust::Trusted) => {
-                return session.send(frames, &Msg::Paired).await.is_ok();
+                if session.send(frames, &Msg::Paired).await.is_err() {
+                    return false;
+                }
+                let relay = shared.lock().ok().and_then(|host| host.relay.clone());
+                if let Some(info) = relay {
+                    let _ = session.send(frames, &Msg::Relay(info)).await;
+                }
+                return true;
             }
             Some(DeviceTrust::PendingAcceptance) => continue,
             _ => break,
@@ -520,10 +547,10 @@ async fn await_pairing(
     false
 }
 
-async fn handle_message(
+async fn handle_message<F: Frames>(
     shared: &SharedHost,
     session: &mut Session,
-    frames: &mut AxumFrames,
+    frames: &mut F,
     device_id: &DeviceId,
     first: Msg,
 ) -> Result<(), HostError> {
@@ -543,17 +570,17 @@ fn storage_error(error: impl std::fmt::Display) -> HostError {
     HostError::Storage(error.to_string())
 }
 
-async fn expect_end(session: &mut Session, frames: &mut AxumFrames) -> Result<(), HostError> {
+async fn expect_end<F: Frames>(session: &mut Session, frames: &mut F) -> Result<(), HostError> {
     match session.recv(frames).await? {
         Some(Msg::End) => Ok(()),
         _ => Err(HostError::Channel("batch was not closed".into())),
     }
 }
 
-async fn receive_images(
+async fn receive_images<F: Frames>(
     shared: &SharedHost,
     session: &mut Session,
-    frames: &mut AxumFrames,
+    frames: &mut F,
     device_id: &DeviceId,
     batch_id: &str,
     count: usize,
@@ -596,10 +623,10 @@ async fn receive_images(
     )
 }
 
-async fn receive_text(
+async fn receive_text<F: Frames>(
     shared: &SharedHost,
     session: &mut Session,
-    frames: &mut AxumFrames,
+    frames: &mut F,
     device_id: &DeviceId,
     batch_id: &str,
     size: usize,
@@ -696,6 +723,7 @@ impl HostInner {
             token: self.ticket.token.clone(),
             fingerprint: self.cert.fingerprint.clone(),
             pub_key: self.keys.public_b64(),
+            relay: self.relay.clone(),
             expires_at: self.ticket.expires_at.to_rfc3339(),
         })
     }
@@ -815,6 +843,115 @@ fn default_phone_name() -> String {
     "Phone".to_string()
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "state", content = "message")]
+pub enum RelayStatus {
+    Off,
+    Connecting,
+    Connected,
+    Error(String),
+}
+
+fn load_relay(dir: &std::path::Path) -> Option<RelayInfo> {
+    let text = std::fs::read_to_string(dir.join("relay.json")).ok()?;
+    let info: RelayInfo = serde_json::from_str(&text).ok()?;
+    info.validate().ok()?;
+    Some(info)
+}
+
+/// Desktop only: keeps this computer connected to its relay so phones outside the Wi-Fi can
+/// reach it. Calling it again (after the setting changed) retires the previous task.
+pub fn spawn_relay(shared: SharedHost, app: tauri::AppHandle) {
+    let generation = {
+        let Ok(mut host) = shared.lock() else {
+            return;
+        };
+        host.relay_generation += 1;
+        host.relay_generation
+    };
+    std::thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        runtime.block_on(relay_loop(shared, app, generation));
+    });
+}
+
+fn set_relay_status(shared: &SharedHost, app: &tauri::AppHandle, status: RelayStatus) {
+    if let Ok(mut host) = shared.lock() {
+        host.relay_status = status;
+    }
+    let _ = app.emit("relay-changed", ());
+}
+
+fn announced_session(text: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(text).ok()?;
+    let id = value.get("session")?.as_str()?;
+    // The id goes into a URL path: accept only what the relay makes.
+    (id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric())).then(|| id.to_string())
+}
+
+async fn relay_loop(shared: SharedHost, app: tauri::AppHandle, generation: u64) {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let current = |shared: &SharedHost| {
+        let host = shared.lock().ok()?;
+        if host.relay_generation != generation {
+            return None;
+        }
+        Some((host.relay.clone()?, mailbox_for(&host.keys.public)))
+    };
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        let Some((info, mailbox)) = current(&shared) else {
+            return;
+        };
+        set_relay_status(&shared, &app, RelayStatus::Connecting);
+        match open_relay(&info, &format!("/m/{mailbox}/desktop")).await {
+            Ok(mut control) => {
+                set_relay_status(&shared, &app, RelayStatus::Connected);
+                backoff = Duration::from_secs(1);
+                loop {
+                    // Wake up now and then so a changed or removed setting closes this connection.
+                    match tokio::time::timeout(Duration::from_secs(5), control.next_text()).await {
+                        Err(_) if current(&shared).is_some() => continue,
+                        Ok(Ok(Some(text))) => {
+                            if let Some(id) = announced_session(&text) {
+                                let (shared, info, path) =
+                                    (shared.clone(), info.clone(), format!("/m/{mailbox}/s/{id}"));
+                                tokio::spawn(async move {
+                                    if let Ok(frames) = open_relay(&info, &path).await {
+                                        // The relay hides the phone's address: one shared bucket.
+                                        serve_frames(shared, frames, IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+                                            .await;
+                                    }
+                                });
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                if current(&shared).is_none() {
+                    return;
+                }
+                set_relay_status(
+                    &shared,
+                    &app,
+                    RelayStatus::Error("connection to the relay was lost".into()),
+                );
+            }
+            Err(error) => {
+                set_relay_status(&shared, &app, RelayStatus::Error(error.to_string()));
+            }
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_secs(30));
+    }
+}
+
 fn load_known_pcs(dir: &std::path::Path) -> Result<Vec<KnownPc>, HostError> {
     let path = dir.join("phone-book.json");
     if !path.exists() {
@@ -849,6 +986,28 @@ mod tests {
     use crate::adapters::phone_client::{remembered_qr, send_batch};
     use crate::domain::{BatchId, HostError, Msg, PcId};
 
+    /// What a desktop does with one batch, without the app around it.
+    async fn stub_receive<F: crate::adapters::channel::Frames>(
+        mut frames: F,
+        desktop: KeyPair,
+        received: Arc<Mutex<Vec<Vec<u8>>>>,
+    ) {
+        let (established, _hello) = handshake_responder(&mut frames, &desktop).await.unwrap();
+        let mut session = established.session;
+        let Some(Msg::BeginImages { count, .. }) = session.recv(&mut frames).await.unwrap() else {
+            panic!("expected a batch");
+        };
+        for _ in 0..count {
+            let Some(Msg::Item { size }) = session.recv(&mut frames).await.unwrap() else {
+                panic!("expected an image");
+            };
+            let bytes = session.recv_chunks(&mut frames, size as usize).await.unwrap();
+            received.lock().unwrap().push(bytes);
+        }
+        assert_eq!(session.recv(&mut frames).await.unwrap(), Some(Msg::End));
+        session.send(&mut frames, &Msg::Ack).await.unwrap();
+    }
+
     /// A TLS server with a stand-in handler that speaks the real channel, to prove the pieces
     /// (pinned TLS, WebSocket, Noise, chunking) work together over a real socket.
     async fn serve_channel_stub(
@@ -875,27 +1034,7 @@ mod tests {
             get(move |ws: WebSocketUpgrade| {
                 let (desktop, received) = (desktop.clone(), received.clone());
                 async move {
-                    ws.on_upgrade(move |socket| async move {
-                        let mut frames = AxumFrames(socket);
-                        let (established, _hello) =
-                            handshake_responder(&mut frames, &desktop).await.unwrap();
-                        let mut session = established.session;
-                        let Some(Msg::BeginImages { count, .. }) =
-                            session.recv(&mut frames).await.unwrap()
-                        else {
-                            panic!("expected a batch");
-                        };
-                        for _ in 0..count {
-                            let Some(Msg::Item { size }) = session.recv(&mut frames).await.unwrap()
-                            else {
-                                panic!("expected an image");
-                            };
-                            let bytes = session.recv_chunks(&mut frames, size as usize).await.unwrap();
-                            received.lock().unwrap().push(bytes);
-                        }
-                        assert_eq!(session.recv(&mut frames).await.unwrap(), Some(Msg::End));
-                        session.send(&mut frames, &Msg::Ack).await.unwrap();
-                    })
+                    ws.on_upgrade(move |socket| stub_receive(AxumFrames(socket), desktop, received))
                 }
             }),
         );
@@ -929,6 +1068,82 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error, HostError::NotTrusted);
+    }
+
+    /// The real relay, a stand-in desktop that is only connected to it, and the real phone client
+    /// whose Wi-Fi route is dead: the batch must arrive through the relay.
+    #[tokio::test]
+    async fn a_batch_reaches_a_computer_that_is_only_reachable_through_the_relay() {
+        use crate::adapters::phone_client::open_relay;
+        use crate::domain::{mailbox_for, RelayInfo};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let relay_port = listener.local_addr().unwrap().port();
+        let relay = fast_share_relay::router(fast_share_relay::Config {
+            token: Some("tok".into()),
+            ..Default::default()
+        })
+        .into_make_service_with_connect_info::<std::net::SocketAddr>();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, relay).await;
+        });
+        let info = RelayInfo {
+            url: format!("ws://127.0.0.1:{relay_port}"),
+            fingerprint: None,
+            token: Some("tok".into()),
+        };
+
+        let desktop = KeyPair::generate().unwrap();
+        let phone = KeyPair::generate().unwrap();
+        let mailbox = mailbox_for(&desktop.public);
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let mut control = open_relay(&info, &format!("/m/{mailbox}/desktop")).await.unwrap();
+        {
+            let (info, desktop, received, mailbox) =
+                (info.clone(), desktop.clone(), received.clone(), mailbox.clone());
+            tokio::spawn(async move {
+                while let Ok(Some(text)) = control.next_text().await {
+                    let id = super::announced_session(&text).expect("a session id");
+                    let (info, desktop, received, mailbox) =
+                        (info.clone(), desktop.clone(), received.clone(), mailbox.clone());
+                    tokio::spawn(async move {
+                        let frames = open_relay(&info, &format!("/m/{mailbox}/s/{id}")).await.unwrap();
+                        stub_receive(frames, desktop, received).await;
+                    });
+                }
+            });
+        }
+
+        // A Wi-Fi address nothing listens on: the phone has to fall back to the relay.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead_port = closed.local_addr().unwrap().port();
+        drop(closed);
+        let pc = PcId::parse("pc-test-0001").unwrap();
+        let mut dest = remembered_qr(&pc, "Test", "127.0.0.1", dead_port, &"a".repeat(64), &desktop.public_b64());
+        dest.relay = Some(info.clone());
+
+        let image = vec![5u8; 120_000];
+        send_batch(&dest, &phone, "Phone", &BatchId::generate(), &[image.clone()])
+            .await
+            .unwrap();
+        assert_eq!(*received.lock().unwrap(), vec![image]);
+
+        // A wrong relay token is reported as such, not as "computer unreachable".
+        let mut wrong_token = dest.clone();
+        wrong_token.relay = Some(RelayInfo { token: Some("nope".into()), ..info.clone() });
+        let error = send_batch(&wrong_token, &phone, "Phone", &BatchId::generate(), &[vec![1]])
+            .await
+            .unwrap_err();
+        assert_eq!(error, HostError::RelayRefused);
+
+        // A computer that is not connected to the relay is just unreachable (the relay answers 409).
+        let stranger = KeyPair::generate().unwrap();
+        let mut offline = dest.clone();
+        offline.pub_key = stranger.public_b64();
+        let error = send_batch(&offline, &phone, "Phone", &BatchId::generate(), &[vec![1]])
+            .await
+            .unwrap_err();
+        assert!(matches!(error, HostError::NoServer { .. }), "{error:?}");
     }
 
     #[test]

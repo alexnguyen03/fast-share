@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::relay::RelayInfo;
+
 /// Largest plaintext carried by one Noise message (65 535 minus the 16-byte tag), minus CBOR framing room.
 pub const CHUNK_BYTES: usize = 60_000;
 
@@ -36,5 +38,7 @@ pub enum Msg {
         code: String,
     },
     Paired,
+    /// After pairing: the relay this computer is reachable through.
+    Relay(RelayInfo),
     Rejected,
 }

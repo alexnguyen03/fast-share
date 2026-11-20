@@ -12,10 +12,13 @@ use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 use crate::adapters::channel::{handshake_initiator, sas, Frames};
 use crate::adapters::keys::{decode_public_key, KeyPair};
 use crate::domain::{
-    require_lan_host, BatchId, Hello, HostError, Msg, PcId, QrPayload, MAX_IMAGE_BYTES,
+    mailbox_for, require_lan_host, BatchId, Hello, HostError, Msg, PcId, QrPayload, RelayInfo,
+    MAX_IMAGE_BYTES,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_millis(1500);
+/// How long the Wi-Fi gets before a phone that knows a relay tries that instead.
+const LAN_BEFORE_RELAY: Duration = Duration::from_millis(2500);
 const SHORT_TIMEOUT: Duration = Duration::from_secs(8);
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the user has to confirm on the computer (the computer drops the request after 2 minutes).
@@ -98,7 +101,21 @@ fn code_error(code: &str) -> HostError {
     }
 }
 
-struct WsFrames(WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>);
+pub(crate) struct WsFrames(WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>);
+
+impl WsFrames {
+    /// The next text frame. Only the relay's control socket uses text; binary frames are skipped.
+    pub(crate) async fn next_text(&mut self) -> Result<Option<String>, HostError> {
+        loop {
+            match self.0.next().await {
+                None | Some(Ok(WsMessage::Close(_))) => return Ok(None),
+                Some(Ok(WsMessage::Text(text))) => return Ok(Some(text.to_string())),
+                Some(Ok(_)) => continue,
+                Some(Err(error)) => return Err(HostError::Channel(error.to_string())),
+            }
+        }
+    }
+}
 
 impl Frames for WsFrames {
     async fn send(&mut self, bytes: Vec<u8>) -> Result<(), HostError> {
@@ -125,7 +142,7 @@ impl Frames for WsFrames {
 
 /// Opens the WebSocket to the computer. The TLS certificate pin is an extra layer; what the
 /// phone trusts is the computer's public key, checked by the handshake that follows.
-async fn open(dest: &QrPayload) -> Result<WsFrames, HostError> {
+async fn open_lan(dest: &QrPayload, timeout: Duration) -> Result<WsFrames, HostError> {
     require_lan_host(&dest.host)?;
     let config = pinned_tls_config(&dest.fingerprint)?;
     let url = format!("wss://{}:{}/v2/channel", dest.host, dest.port);
@@ -135,7 +152,7 @@ async fn open(dest: &QrPayload) -> Result<WsFrames, HostError> {
         true,
         Some(Connector::Rustls(Arc::new(config))),
     );
-    match tokio::time::timeout(SHORT_TIMEOUT, connect).await {
+    match tokio::time::timeout(timeout, connect).await {
         Ok(Ok((stream, _))) => Ok(WsFrames(stream)),
         Ok(Err(error)) => Err(ws_connect_error(&dest.host, dest.port, &error)),
         Err(_) => Err(classify_connect_failure(
@@ -144,6 +161,109 @@ async fn open(dest: &QrPayload) -> Result<WsFrames, HostError> {
             dest.port,
             true,
         )),
+    }
+}
+
+/// A failure that means "not reachable on this Wi-Fi", the cases where the relay may still work.
+fn is_lan_miss(error: &HostError) -> bool {
+    matches!(
+        error,
+        HostError::Unreachable
+            | HostError::NoServer { .. }
+            | HostError::DifferentSubnet { .. }
+            | HostError::GuestWifiOrFirewall
+    )
+}
+
+/// Opens the channel to the computer: on the Wi-Fi when it answers, through its relay otherwise.
+async fn open(dest: &QrPayload) -> Result<WsFrames, HostError> {
+    let Some(relay) = &dest.relay else {
+        return open_lan(dest, SHORT_TIMEOUT).await;
+    };
+    // Off the home Wi-Fi there is no point waiting for a LAN address that cannot answer.
+    let lan = if crate::adapters::lan_ipv4().is_loopback() {
+        Err(HostError::Unreachable)
+    } else {
+        open_lan(dest, LAN_BEFORE_RELAY).await
+    };
+    let miss = match lan {
+        Ok(frames) => return Ok(frames),
+        Err(error) if is_lan_miss(&error) => error,
+        Err(error) => return Err(error),
+    };
+    let mailbox = mailbox_for(&decode_public_key(&dest.pub_key)?);
+    match open_relay(relay, &format!("/m/{mailbox}/connect")).await {
+        Ok(frames) => Ok(frames),
+        // The relay itself said no: that is the more useful message.
+        Err(error @ (HostError::RelayRefused | HostError::Busy | HostError::NotTrusted)) => Err(error),
+        // 409: the relay is fine but the computer is not on it. The LAN error already says it is unreachable.
+        Err(_) => Err(miss),
+    }
+}
+
+/// Asks the relay whether the computer is connected to it. Plain HTTPS, so no session is started.
+async fn relay_online(relay: &RelayInfo, mailbox: &str) -> bool {
+    let url = format!(
+        "{}/m/{mailbox}/status",
+        relay.url.replacen("wss://", "https://", 1).replacen("ws://", "http://", 1)
+    );
+    let mut builder = reqwest::Client::builder().timeout(READY_TIMEOUT * 2);
+    if let (Some(fingerprint), true) = (&relay.fingerprint, relay.url.starts_with("wss://")) {
+        let Ok(config) = pinned_tls_config(fingerprint) else {
+            return false;
+        };
+        builder = builder.use_preconfigured_tls(config);
+    }
+    let Ok(client) = builder.build() else {
+        return false;
+    };
+    let mut request = client.get(url);
+    if let Some(token) = &relay.token {
+        request = request.bearer_auth(token);
+    }
+    request
+        .send()
+        .await
+        .map(|response| response.status().is_success())
+        .unwrap_or(false)
+}
+
+/// Opens a WebSocket on the relay. `path` is one of the relay's `/m/…` routes.
+pub(crate) async fn open_relay(info: &RelayInfo, path: &str) -> Result<WsFrames, HostError> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    info.validate()?;
+    let mut request = format!("{}{}", info.url, path)
+        .into_client_request()
+        .map_err(|_| HostError::InvalidRelay)?;
+    if let Some(token) = &info.token {
+        request.headers_mut().insert(
+            "authorization",
+            format!("Bearer {token}")
+                .parse()
+                .map_err(|_| HostError::InvalidRelay)?,
+        );
+    }
+    // A self-signed relay is pinned by fingerprint; with a real certificate the default roots apply.
+    let connector = match &info.fingerprint {
+        Some(fingerprint) if info.url.starts_with("wss://") => {
+            Some(Connector::Rustls(Arc::new(pinned_tls_config(fingerprint)?)))
+        }
+        _ => None,
+    };
+    let connect = tokio_tungstenite::connect_async_tls_with_config(request, None, true, connector);
+    match tokio::time::timeout(SHORT_TIMEOUT, connect).await {
+        Ok(Ok((stream, _))) => Ok(WsFrames(stream)),
+        Ok(Err(WsError::Http(response))) => Err(match response.status().as_u16() {
+            401 => HostError::RelayRefused,
+            429 => HostError::Busy,
+            // 409: the relay is fine but the computer is not connected to it.
+            _ => HostError::Unreachable,
+        }),
+        Ok(Err(error)) if error.to_string().contains("fingerprint mismatch") => {
+            Err(HostError::NotTrusted)
+        }
+        _ => Err(HostError::Unreachable),
     }
 }
 
@@ -157,14 +277,20 @@ fn hello(name: &str, pairing_token: Option<String>, pair: bool) -> Hello {
 
 /// Asks the computer to trust this phone. Calls `on_code` with the six digits as soon as the
 /// handshake is done, then waits until the user on the computer answers.
-/// `Ok(true)` means the computer accepted.
+/// On acceptance the computer may also announce its relay.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PairOutcome {
+    pub accepted: bool,
+    pub relay: Option<RelayInfo>,
+}
+
 pub async fn pair(
     dest: &QrPayload,
     keys: &KeyPair,
     name: &str,
     pairing_token: Option<String>,
     on_code: impl FnOnce(String),
-) -> Result<bool, HostError> {
+) -> Result<PairOutcome, HostError> {
     let expected = decode_public_key(&dest.pub_key)?;
     let mut frames = open(dest).await?;
     let mut established = handshake_initiator(
@@ -180,8 +306,22 @@ pub async fn pair(
     let wait = async {
         loop {
             match established.session.recv(&mut frames).await? {
-                Some(Msg::Paired) => return Ok(true),
-                Some(Msg::Rejected) | None => return Ok(false),
+                Some(Msg::Paired) => {
+                    // The relay, when there is one, follows right behind.
+                    let relay = match tokio::time::timeout(
+                        Duration::from_secs(2),
+                        established.session.recv(&mut frames),
+                    )
+                    .await
+                    {
+                        Ok(Ok(Some(Msg::Relay(info)))) if info.validate().is_ok() => Some(info),
+                        _ => None,
+                    };
+                    return Ok(PairOutcome { accepted: true, relay });
+                }
+                Some(Msg::Rejected) | None => {
+                    return Ok(PairOutcome { accepted: false, relay: None })
+                }
                 Some(Msg::Error { code }) => return Err(code_error(&code)),
                 Some(_) => continue,
             }
@@ -189,7 +329,7 @@ pub async fn pair(
     };
     tokio::time::timeout(PAIRING_TIMEOUT, wait)
         .await
-        .unwrap_or(Ok(false))
+        .unwrap_or(Ok(PairOutcome { accepted: false, relay: None }))
 }
 
 async fn session_for(
@@ -305,6 +445,19 @@ pub async fn fetch_identity(host: &str, port: u16) -> Result<PcIdentity, HostErr
 }
 
 pub async fn ready(qr: &QrPayload) -> bool {
+    if lan_ready(qr).await {
+        return true;
+    }
+    let Some(relay) = &qr.relay else {
+        return false;
+    };
+    let Ok(key) = decode_public_key(&qr.pub_key) else {
+        return false;
+    };
+    relay_online(relay, &mailbox_for(&key)).await
+}
+
+async fn lan_ready(qr: &QrPayload) -> bool {
     let Ok(client) = pinned_client(qr, READY_TIMEOUT) else {
         return false;
     };
@@ -333,6 +486,7 @@ pub fn remembered_qr(
         token: String::new(),
         fingerprint: fingerprint.to_string(),
         pub_key: pub_key.to_string(),
+        relay: None,
         expires_at: String::new(),
     }
 }

@@ -63,6 +63,18 @@ export type Destination = {
   online: boolean;
 };
 
+export type RelayState =
+  | { state: "off" }
+  | { state: "connecting" }
+  | { state: "connected" }
+  | { state: "error"; message: string };
+
+export type RelayView = {
+  url: string | null;
+  hasToken: boolean;
+  status: RelayState;
+};
+
 export type PairResult = {
   status: "pending" | "trusted" | "rejected";
   /** Six digits to compare with the computer while waiting. */
@@ -453,6 +465,31 @@ export const api = {
       return Promise.resolve();
     }
     return invoke("delete_history");
+  },
+
+  getRelay(): Promise<RelayView> {
+    if (!inTauri()) {
+      return Promise.resolve({ url: null, hasToken: false, status: { state: "off" } });
+    }
+    return invoke<RelayView>("get_relay");
+  },
+
+  /** Saves the relay string the admin pasted; empty text removes the relay. */
+  setRelay(text: string): Promise<RelayView> {
+    if (!inTauri()) {
+      return Promise.resolve({ url: null, hasToken: false, status: { state: "off" } });
+    }
+    return invoke<RelayView>("set_relay", { text });
+  },
+
+  async onRelayChanged(cb: () => void): Promise<() => void> {
+    if (!inTauri()) {
+      return () => undefined;
+    }
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<null>("relay-changed", () => {
+      cb();
+    });
   },
 
   getSettings(): Promise<Settings> {

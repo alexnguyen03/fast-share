@@ -1290,6 +1290,7 @@ dependencies = [
  "chrono",
  "ciborium",
  "drag",
+ "fast-share-relay",
  "futures-util",
  "hex",
  "if-addrs",
@@ -1318,6 +1319,20 @@ dependencies = [
  "uuid",
  "windows 0.52.0",
  "windows-core 0.52.0",
+]
+
+[[package]]
+name = "fast-share-relay"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-server",
+ "hex",
+ "rcgen",
+ "rustls",
+ "sha2",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
