@@ -1,6 +1,7 @@
 import * as React from "react";
 import { ChevronLeft, Moon, Sun } from "lucide-react";
 import { api, type RelayView } from "../../shared/commands";
+import { buildLabel } from "../../shared/build-info";
 import { en } from "../../shared/locales/en";
 import { cn } from "../../shared/lib/utils";
 import {
@@ -407,6 +408,10 @@ function DesktopSettingsScreen({
             <span className="font-medium text-foreground">
               {en.appVersionValue}
             </span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">{en.appBuildLabel}</span>
+            <span className="font-medium text-foreground">{buildLabel()}</span>
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">{en.appAuthorLabel}</span>

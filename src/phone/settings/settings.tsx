@@ -1,6 +1,7 @@
 import * as React from "react";
 import { ChevronLeft, Moon, Sun } from "lucide-react";
 import { api } from "../../shared/commands";
+import { buildLabel } from "../../shared/build-info";
 import { en } from "../../shared/locales/en";
 import { cn } from "../../shared/lib/utils";
 import {
@@ -102,6 +103,10 @@ export function PhoneSettingsScreen({
           {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>
       </header>
+      {/* Always in view, so the installed build can be told apart without scrolling. */}
+      <p className="-mt-1.5 text-center text-xs text-muted-foreground">
+        {`${en.appVersionValue} · ${buildLabel()}`}
+      </p>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pt-1">
         <div className="flex flex-col gap-1.5">
@@ -219,6 +224,10 @@ export function PhoneSettingsScreen({
             <span className="font-medium text-foreground">
               {en.appVersionValue}
             </span>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">{en.appBuildLabel}</span>
+            <span className="font-medium text-foreground">{buildLabel()}</span>
           </div>
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">{en.appAuthorLabel}</span>
