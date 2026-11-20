@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `npm run android:apk` now stamps the build with the git hash and the build time: the APK is copied to `dist-apk/` with both in its name, and Settings shows them under Build.
 - A self-hosted relay (`relay/`, see `docs/relay.md`) so a phone can reach its computer outside the Wi-Fi without trusting the relay. Settings → Relay on the computer, and the pairing QR carries the relay.
 
 ### Changed
