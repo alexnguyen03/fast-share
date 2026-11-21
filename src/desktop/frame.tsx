@@ -79,8 +79,8 @@ export function DesktopFrame({
     };
   }, []);
 
-  // App-wide keys: s settings, d devices, h tuck into the edge, t always on top,
-  // i / c open the history tabs from another screen (the history screen handles them itself).
+  // App-wide keys, all within reach of the left hand: s settings, d devices, x tuck into the edge,
+  // t always on top, v / c open the history tabs from another screen (history handles them itself).
   React.useEffect(() => {
     function onKey(event: KeyboardEvent): void {
       const target = event.target;
@@ -100,15 +100,15 @@ export function DesktopFrame({
         navigateDesktop("settings");
       } else if (key === "d") {
         navigateDesktop("devices");
-      } else if (key === "h") {
+      } else if (key === "x") {
         void api.hideToEdge().then(setPrefs);
       } else if (key === "t") {
         void api.setWindowPrefs({ alwaysOnTop: !prefs.alwaysOnTop }).then((next) => {
           setPrefs(next);
           showToast(next.alwaysOnTop ? en.alwaysOnTopOn : en.alwaysOnTopOff);
         });
-      } else if ((key === "i" || key === "c") && active !== "history") {
-        saveTab(key === "i" ? "images" : "clipboard");
+      } else if ((key === "v" || key === "c") && active !== "history") {
+        saveTab(key === "v" ? "images" : "clipboard");
         navigateDesktop("history");
       }
     }

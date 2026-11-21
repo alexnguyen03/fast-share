@@ -581,6 +581,44 @@ function HistoryTile({
   );
 }
 
+/**
+ * The item next to `currentId` in the arrow's direction, judged by where items sit on screen,
+ * so the 2-column image grid and its time groups need no index maths. The first item when
+ * nothing is selected; null at an edge.
+ */
+function neighbourId(attr: string, currentId: string | null, key: string): string | null {
+  const nodes = Array.from(document.querySelectorAll<HTMLElement>(`[${attr}]`));
+  const current = nodes.find((node) => node.getAttribute(attr) === currentId);
+  if (!current) {
+    return nodes[0]?.getAttribute(attr) ?? null;
+  }
+  const from = current.getBoundingClientRect();
+  const vertical = key === "arrowup" || key === "arrowdown";
+  let best: HTMLElement | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const node of nodes) {
+    if (node === current) {
+      continue;
+    }
+    const box = node.getBoundingClientRect();
+    const dx = box.left + box.width / 2 - (from.left + from.width / 2);
+    const dy = box.top + box.height / 2 - (from.top + from.height / 2);
+    const sameRow = Math.abs(dy) < from.height / 2;
+    const ahead =
+      key === "arrowdown" ? dy > 1 : key === "arrowup" ? dy < -1 : key === "arrowright" ? dx > 1 && sameRow : dx < -1 && sameRow;
+    if (!ahead) {
+      continue;
+    }
+    // straight up/down beats a diagonal; sideways only looks within the row
+    const score = vertical ? Math.abs(dy) + 2 * Math.abs(dx) : Math.abs(dx);
+    if (score < bestScore) {
+      bestScore = score;
+      best = node;
+    }
+  }
+  return best?.getAttribute(attr) ?? null;
+}
+
 /** Focuses an item after React has rendered the tab it lives in. */
 function focusItem(selector: string): void {
   window.requestAnimationFrame(() => {
@@ -806,8 +844,23 @@ function DesktopHistoryScreen({
       if (event.altKey || ((event.ctrlKey || event.metaKey) && !copyKey)) {
         return;
       }
-      // i / c jump to a tab and select its first item (the frame handles them on other screens).
-      if (key === "i" && !copyKey) {
+      // Arrows move the selection; Enter or Ctrl+C then copies it.
+      if (key.startsWith("arrow")) {
+        event.preventDefault();
+        const attr = tab === "images" ? "data-image-id" : "data-text-id";
+        const next = neighbourId(attr, tab === "images" ? currentActiveId : currentTextId, key);
+        if (next) {
+          if (tab === "images") {
+            setActiveImageId(next);
+          } else {
+            setActiveTextId(next);
+          }
+          focusItem(`[${attr}="${next}"]`);
+        }
+        return;
+      }
+      // v / c jump to a tab and select its first item (the frame handles them on other screens).
+      if (key === "v") {
         switchTab("images");
         setSelectMode(false);
         setActiveImageId(items[0]?.imageId ?? null);

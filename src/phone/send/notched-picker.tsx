@@ -55,7 +55,7 @@ export function NotchedPicker({
   }, []);
 
   return (
-    <div ref={boxRef} className="relative h-[50dvh] min-h-64 w-full">
+    <div ref={boxRef} className="relative h-[36dvh] min-h-60 w-full">
       <div
         role="button"
         tabIndex={0}

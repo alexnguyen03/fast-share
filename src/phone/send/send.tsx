@@ -329,7 +329,8 @@ function PhoneSendScreen({
       {clip !== null ? (
         <div
           data-no-swipe
-          className="fixed inset-0 z-40 flex flex-col bg-black/45 px-4 pt-[max(44px,calc(8px+env(safe-area-inset-top,0px)))]"
+          // centred over the picker area; the keyboard shrinks the viewport and it re-centres above it
+          className="fixed inset-0 z-40 flex flex-col justify-center bg-black/45 px-4 py-[max(44px,calc(8px+env(safe-area-inset-top,0px)))]"
           onClick={(event) => {
             // a tap on the dimmed background closes it, like Cancel
             if (event.target === event.currentTarget && !clipSending) {
@@ -340,41 +341,38 @@ function PhoneSendScreen({
           }}
         >
           <Card className="flex flex-col gap-2.5 rounded-2xl border-0 bg-muted p-3 shadow-xl">
-            <div className="relative">
-              <textarea
-                ref={clipInputRef}
-                value={clip}
-                rows={5}
-                placeholder={en.clipboardPlaceholder}
-                aria-label={en.sendClipboard}
-                onChange={(event) => {
-                  clipBatchRef.current = null; // edited text is a new message
-                  setClip(event.target.value);
-                }}
-                className="block w-full resize-none rounded-xl border-0 bg-background p-2.5 pb-9 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-              />
-              {clip.length > 0 ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  className="absolute right-1.5 bottom-1.5 text-muted-foreground"
-                  disabled={clipSending}
-                  onClick={() => {
-                    clipBatchRef.current = null;
-                    setClip("");
-                    setClipError("");
-                    clipInputRef.current?.focus();
-                  }}
-                >
-                  {en.clear}
-                </Button>
-              ) : null}
-            </div>
+            <textarea
+              ref={clipInputRef}
+              value={clip}
+              rows={6}
+              placeholder={en.clipboardPlaceholder}
+              aria-label={en.sendClipboard}
+              onChange={(event) => {
+                clipBatchRef.current = null; // edited text is a new message
+                setClip(event.target.value);
+              }}
+              className="block max-h-[40dvh] w-full resize-none rounded-xl border-0 bg-background p-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            />
             {clipError ? (
               <p className="m-0 text-xs text-destructive">{clipError}</p>
             ) : null}
-            <div className="grid grid-cols-2 gap-2">
+            {/* Clear sits in the button row: inside the field it covered the last line of text */}
+            <div className="grid grid-cols-[auto_1fr_1fr] gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                disabled={clipSending || clip.length === 0}
+                onClick={() => {
+                  clipBatchRef.current = null;
+                  setClip("");
+                  setClipError("");
+                  clipInputRef.current?.focus();
+                }}
+              >
+                {en.clear}
+              </Button>
               <Button
                 type="button"
                 variant="ghost"

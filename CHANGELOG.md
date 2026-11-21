@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Desktop: clipboard items show only the text; click copies, right-click has Preview (select part of it), Details, Save forever, Mask as sensitive, and Delete.
 - Desktop: links with tokens, API keys and password-like text show with a masked middle (`https:/*****vCaD/`); copying still gives the full text.
 - Desktop: Save forever for texts as well as images; saved items survive old-history cleanup and Delete all.
-- Desktop: keys `i` `c` `s` `d` `h` `t`, Enter or Ctrl+C to copy, and Ctrl+Shift+Space anywhere to bring the app up or put it away.
+- Desktop: keys `v` (images) `c` (clipboard) `s` `d` `x` (tuck into the edge) `t`, arrow keys to move between items, Enter or Ctrl+C to copy, and Ctrl+Shift+Space anywhere to bring the app up or put it away.
 - Desktop: image preview fills the screen, with icon buttons and the file size; deleting an image asks first.
 - Phone: the header and tab bar stay put, a sideways swipe changes tab, and only the current tab shows its name.
 - Phone: tossing asks which computers should catch it (tick one or more); with one paired computer it goes straight there. The image picker fills the top half of Send.
