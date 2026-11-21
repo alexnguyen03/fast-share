@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Copy,
   FolderOpen,
+  Loader2,
   Pin,
   PinOff,
   RotateCcw,
@@ -20,6 +21,9 @@ import { showToast, Toaster } from "../../shared/ui/toast";
 import { formatBytes, relativeTime, useImageSrc } from "../history/history";
 
 export type PreviewRequest = { ids: string[]; index: number };
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 5;
 
 type Meta = { phoneName: string; receivedAt: string; pinned: boolean; size: number };
 
@@ -76,7 +80,6 @@ function PreviewScreen({
   const [zoom, setZoom] = React.useState<number>(1);
 
   const id = request.ids[request.index] ?? "";
-  const thumbSrc = useImageSrc(id, "thumb");
   const fullSrc = useImageSrc(id, "full");
   const meta = findMeta(batches, id);
   const hasPrev = request.index > 0;
@@ -116,9 +119,9 @@ function PreviewScreen({
       } else if (event.key === "ArrowRight") {
         step(1);
       } else if (event.key === "+" || event.key === "=") {
-        setZoom((z) => Math.min(3, z + 0.25));
+        setZoom((z) => Math.min(MAX_ZOOM, z + 0.25));
       } else if (event.key === "-") {
-        setZoom((z) => Math.max(0.5, z - 0.25));
+        setZoom((z) => Math.max(MIN_ZOOM, z - 0.25));
       } else if (event.key === "0") {
         setZoom(1);
       }
@@ -126,6 +129,21 @@ function PreviewScreen({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [step]);
+
+  // Ctrl + wheel zooms the picture. A native, non-passive listener: React's wheel handler is
+  // passive, so it could not stop WebView2 from zooming the whole page instead.
+  React.useEffect(() => {
+    function onWheel(event: WheelEvent): void {
+      if (!event.ctrlKey) {
+        return;
+      }
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+      setZoom((z) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number((z * factor).toFixed(3)))));
+    }
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel);
+  }, []);
 
   const info = [
     meta?.phoneName,
@@ -144,14 +162,15 @@ function PreviewScreen({
         data-tauri-drag-region
         className="absolute inset-0 flex items-center justify-center overflow-auto"
       >
-        {thumbSrc && !fullReady ? (
-          <img
-            src={thumbSrc}
-            alt={en.image}
-            draggable={false}
-            style={zoomStyle}
-            className="max-h-full max-w-full object-contain blur-[1px] transition-transform duration-150"
-          />
+        {!fullReady ? (
+          <div
+            role="status"
+            aria-label={en.loading}
+            className="pointer-events-none flex flex-col items-center gap-3 text-white/70"
+          >
+            <Loader2 className="h-8 w-8 animate-spin" />
+            {meta?.size ? <span className="text-xs">{formatBytes(meta.size)}</span> : null}
+          </div>
         ) : null}
         {fullSrc ? (
           <img
@@ -205,13 +224,13 @@ function PreviewScreen({
         </p>
         <span className="mx-1 h-5 w-px shrink-0 bg-white/20" />
         <div className="flex shrink-0 items-center">
-          <IconButton label={en.zoomOut} onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}>
+          <IconButton label={en.zoomOut} onClick={() => setZoom((z) => Math.max(MIN_ZOOM, z - 0.25))}>
             <ZoomOut className="h-4.5 w-4.5" />
           </IconButton>
           <IconButton label={en.resetZoom} onClick={() => setZoom(1)}>
             <RotateCcw className="h-4 w-4" />
           </IconButton>
-          <IconButton label={en.zoomIn} onClick={() => setZoom((z) => Math.min(3, z + 0.25))}>
+          <IconButton label={en.zoomIn} onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + 0.25))}>
             <ZoomIn className="h-4.5 w-4.5" />
           </IconButton>
           <span className="mx-1 h-5 w-px bg-white/20" />

@@ -1,7 +1,6 @@
 import * as React from "react";
 import {
   ArrowUpFromLine,
-  ClipboardPaste,
   Laptop,
   Loader2,
   X,
@@ -31,6 +30,7 @@ import { loadDrafts, saveDrafts } from "../draft-store";
 import { buzzIfEnabled } from "../haptics";
 import { errorText, note } from "../log";
 import { mountPhoneSettings } from "../settings/settings";
+import { NotchedPicker } from "./notched-picker";
 import { pickTargets } from "./target-picker";
 
 let inboxBound = false;
@@ -282,17 +282,6 @@ function PhoneSendScreen({
         {known.length > 0 ? (
           <>
             <div className="flex flex-col gap-3">
-              <Button
-                type="button"
-                variant="secondary"
-                size="lg"
-                className="gap-2 rounded-2xl"
-                onClick={() => void openClipboard()}
-              >
-                <ClipboardPaste className="h-4 w-4" />
-                {en.sendClipboard}
-              </Button>
-
               <Input
                 ref={fileInputRef}
                 type="file"
@@ -312,31 +301,10 @@ function PhoneSendScreen({
                 }}
               />
 
-              <Card
-                role="button"
-                tabIndex={0}
-                onClick={() => fileInputRef.current?.click()}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    fileInputRef.current?.click();
-                  }
-                }}
-                className="flex h-[50dvh] cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-0 bg-accent px-5 text-center transition-transform focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none active:scale-[0.99]"
-              >
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                  <ArrowUpFromLine className="h-6 w-6" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-base font-semibold text-foreground">
-                    {en.pickImages}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {en.tapToPickPhotos}
-                  </span>
-                </div>
-              </Card>
-
+              <NotchedPicker
+                onPickImages={() => fileInputRef.current?.click()}
+                onPasteClipboard={() => void openClipboard()}
+              />
             </div>
           </>
         ) : (

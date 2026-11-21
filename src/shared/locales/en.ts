@@ -94,6 +94,8 @@ export const en = {
   ],
   discardEdits: "Discard edits",
   discardAll: "Discard all",
+  loading: "Loading",
+  pasteClipboard: "Paste clipboard",
   discardEditsTitle: "Discard your edits?",
   discardEditsDescription: "Every mark and the crop on this image go. The image stays.",
   pickComputersHint: "Tick every computer that should catch it.",
