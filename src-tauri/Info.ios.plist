@@ -4,6 +4,8 @@
 <dict>
   <key>NSCameraUsageDescription</key>
   <string>Fast Share uses the camera to scan a computer QR code.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>iOS only shares the Wi-Fi name with apps allowed to use location. Fast Share reads the name and nothing else.</string>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>

@@ -105,7 +105,7 @@ def patch_configurations(text, bundle_id, lines, label):
     return updated
 
 
-def merge_app_group(entitlements_file):
+def merge_app_group(entitlements_file, source):
     if entitlements_file.is_file():
         with entitlements_file.open("rb") as handle:
             plist = plistlib.load(handle)
@@ -114,6 +114,11 @@ def merge_app_group(entitlements_file):
     groups = list(plist.get("com.apple.security.application-groups") or [])
     if APP_GROUP not in groups:
         groups.append(APP_GROUP)
+    # Everything else the app asks for (for example the Wi-Fi name entitlement) comes along too.
+    with source.open("rb") as handle:
+        for key, value in plistlib.load(handle).items():
+            if key != "com.apple.security.application-groups":
+                plist[key] = value
     plist["com.apple.security.application-groups"] = groups
     entitlements_file.parent.mkdir(parents=True, exist_ok=True)
     with entitlements_file.open("wb") as handle:
@@ -144,7 +149,7 @@ def attach_entitlements(project):
             continue
         relative = existing_entitlements(block)
         if relative and relative != "App.entitlements":
-            merge_app_group(apple_dir / relative)
+            merge_app_group(apple_dir / relative, source)
             merged = True
     if not merged:
         text = patch_configurations(

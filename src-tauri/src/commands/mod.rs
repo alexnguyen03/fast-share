@@ -193,6 +193,19 @@ pub(crate) fn set_relay(
     Ok(relay_view(&host))
 }
 
+/// The Wi-Fi network name on iOS; `None` elsewhere or without permission (Android asks Kotlin).
+#[tauri::command]
+pub(crate) fn wifi_name() -> Option<String> {
+    crate::adapters::wifi::wifi_name()
+}
+
+#[tauri::command]
+pub(crate) fn request_wifi_permission(app: tauri::AppHandle) -> Result<(), String> {
+    // CoreLocation must be driven from the main thread.
+    app.run_on_main_thread(crate::adapters::wifi::request_wifi_permission)
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub(crate) fn surface() -> &'static str {
     if cfg!(any(target_os = "ios", target_os = "android")) {
@@ -1458,6 +1471,8 @@ fn app_group_dir() -> Option<std::path::PathBuf> {
 pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
         surface,
+        wifi_name,
+        request_wifi_permission,
         start_drag,
         get_window_prefs,
         set_window_prefs,

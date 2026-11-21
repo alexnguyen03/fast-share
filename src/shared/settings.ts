@@ -89,6 +89,8 @@ declare global {
       vibrateSuccess(): void;
       readClipboardText(): string;
       takeClipboardRequest(): boolean;
+      wifiName?(): string;
+      requestLocationForWifi?(): void;
     };
   }
 }

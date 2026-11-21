@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronLeft, Laptop, Loader2, QrCode, RefreshCw } from "lucide-react";
+import { ChevronLeft, CircleHelp, Laptop, Loader2, QrCode, RefreshCw } from "lucide-react";
 import {
   api,
   type Destination,
@@ -23,6 +23,7 @@ import {
 } from "../../shared/ui/alert-dialog";
 import { Button } from "../../shared/ui/button";
 import { Card } from "../../shared/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../../shared/ui/dialog";
 import { Input } from "../../shared/ui/input";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import { showToast, Toaster } from "../../shared/ui/toast";
@@ -175,6 +176,8 @@ export function PhoneDevicesScreen({
   const [noticeText, setNoticeText] = React.useState<string>(latestNote());
   const [showOtherPairing, setShowOtherPairing] = React.useState<boolean>(false);
   const [pairing, setPairing] = React.useState<boolean>(false);
+  const [helpOpen, setHelpOpen] = React.useState<boolean>(false);
+  const [wifiName, setWifiName] = React.useState<string>("");
   const cancelScanRef = React.useRef<(() => Promise<void>) | null>(null);
   const stopPairingRef = React.useRef<boolean>(false);
   const pairControl = React.useMemo<PairControl>(
@@ -188,6 +191,20 @@ export function PhoneDevicesScreen({
   const beginPairing = React.useCallback(() => {
     stopPairingRef.current = false;
     setPairing(false);
+  }, []);
+
+  // Read again when the app comes back, e.g. after the user answered the location prompt.
+  React.useEffect(() => {
+    const read = (): void => {
+      void api.wifiName().then(setWifiName).catch(() => setWifiName(""));
+    };
+    read();
+    window.addEventListener("focus", read);
+    document.addEventListener("visibilitychange", read);
+    return () => {
+      window.removeEventListener("focus", read);
+      document.removeEventListener("visibilitychange", read);
+    };
   }, []);
 
   const syncHome = React.useCallback(async () => {
@@ -464,9 +481,25 @@ export function PhoneDevicesScreen({
           )}
         </Card>
 
-        <h2 className="mt-1 mb-0.5 text-sm font-semibold text-foreground">
-          {en.inThisLan}
-        </h2>
+        <div className="mt-1 mb-0.5 flex items-baseline justify-between gap-2">
+          <h2 className="m-0 min-w-0 truncate text-sm font-semibold text-foreground">
+            {en.inThisLan}
+            {wifiName ? (
+              <span className="font-normal text-muted-foreground"> · {wifiName}</span>
+            ) : null}
+          </h2>
+          {!wifiName && runningInApp() ? (
+            <button
+              type="button"
+              className="shrink-0 text-xs font-medium text-primary"
+              onClick={() => {
+                void api.requestWifiPermission();
+              }}
+            >
+              {en.showWifiName}
+            </button>
+          ) : null}
+        </div>
         <Card className="flex flex-col gap-1 border-0 bg-muted px-3 py-2 shadow-none">
           {nearbyList.length === 0 ? (
             <p className="px-1 py-2 text-sm text-muted-foreground">
@@ -515,9 +548,21 @@ export function PhoneDevicesScreen({
           )}
         </Card>
 
-        <h2 className="mt-1 mb-0.5 text-sm font-semibold text-foreground">
-          {en.pairComputerTitle}
-        </h2>
+        <div className="mt-1 mb-0.5 flex items-center justify-between gap-2">
+          <h2 className="m-0 text-sm font-semibold text-foreground">
+            {en.pairComputerTitle}
+          </h2>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={en.pairHelpTitle}
+            title={en.pairHelpTitle}
+            className="h-7 w-7 rounded-full text-muted-foreground"
+            onClick={() => setHelpOpen(true)}
+          >
+            <CircleHelp className="h-4.5 w-4.5" />
+          </Button>
+        </div>
         <Card className="flex flex-col gap-2.5 border-0 bg-muted p-3 shadow-none">
           <Button
             variant="default"
@@ -563,8 +608,22 @@ export function PhoneDevicesScreen({
           ) : null}
         </Card>
 
-        {lanInfo ? <LanStatusCard info={lanInfo} /> : null}
       </div>
+
+      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+        <DialogContent>
+          <div className="pr-8">
+            <DialogTitle>{en.pairHelpTitle}</DialogTitle>
+            <DialogDescription>{en.sameWifiHint}</DialogDescription>
+          </div>
+          <ol className="m-0 flex list-decimal flex-col gap-1.5 pl-5 text-sm text-foreground">
+            {en.pairHelpSteps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          {lanInfo ? <LanStatusCard info={lanInfo} /> : null}
+        </DialogContent>
+      </Dialog>
     </PhoneFrame>
   );
 }

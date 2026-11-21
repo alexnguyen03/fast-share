@@ -10,6 +10,7 @@ mod os_drag;
 mod os_notifier;
 pub mod phone_client;
 pub mod shared_images;
+pub mod wifi;
 
 pub use cert::{fingerprint, load_or_create, write_private_bytes, HostCert};
 pub use fs_store::FsStore;

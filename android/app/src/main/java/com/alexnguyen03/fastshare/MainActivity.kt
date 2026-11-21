@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.media.AudioAttributes
 import android.os.Bundle
@@ -145,6 +146,31 @@ class MainActivity : TauriActivity() {
       val clip = clipboard.primaryClip ?: return ""
       if (clip.itemCount == 0) return ""
       return clip.getItemAt(0).coerceToText(this@MainActivity)?.toString() ?: ""
+    }
+
+    // Android names the Wi-Fi only to apps with location permission; "" when unknown.
+    @JavascriptInterface
+    fun wifiName(): String {
+      if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION)
+        != PackageManager.PERMISSION_GRANTED
+      ) {
+        return ""
+      }
+      val wifi = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return ""
+      @Suppress("DEPRECATION")
+      val ssid = wifi.connectionInfo?.ssid ?: return ""
+      return if (ssid == "<unknown ssid>") "" else ssid.trim('"')
+    }
+
+    @JavascriptInterface
+    fun requestLocationForWifi() {
+      runOnUiThread {
+        ActivityCompat.requestPermissions(
+          this@MainActivity,
+          arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
+          1002,
+        )
+      }
     }
 
     @JavascriptInterface

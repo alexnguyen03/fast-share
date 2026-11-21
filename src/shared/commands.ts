@@ -295,6 +295,31 @@ export const api = {
     return invoke("open_preview", { ids, index });
   },
 
+  /** The phone's Wi-Fi name, or "" when unknown (no location permission, not on Wi-Fi). */
+  async wifiName(): Promise<string> {
+    const bridge = window.__FAST_SHARE_ANDROID__;
+    if (bridge?.wifiName) {
+      return bridge.wifiName();
+    }
+    if (!inTauri()) {
+      return "";
+    }
+    return (await invoke<string | null>("wifi_name")) ?? "";
+  },
+
+  /** Shows the system prompt that lets the app read the Wi-Fi name. */
+  requestWifiPermission(): Promise<void> {
+    const bridge = window.__FAST_SHARE_ANDROID__;
+    if (bridge?.requestLocationForWifi) {
+      bridge.requestLocationForWifi();
+      return Promise.resolve();
+    }
+    if (!inTauri()) {
+      return Promise.resolve();
+    }
+    return invoke("request_wifi_permission");
+  },
+
   closeThisWindow(): Promise<void> {
     if (!inTauri()) {
       return Promise.resolve();

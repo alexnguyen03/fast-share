@@ -12,6 +12,7 @@ import {
   PenTool,
   Loader2,
   Redo2,
+  RotateCcw,
   Trash2,
   Type,
   Undo2,
@@ -98,6 +99,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   const [switchConfirmOpen, setSwitchConfirmOpen] = React.useState<boolean>(false);
   const [markup, setMarkup] = React.useState<boolean>(true);
   const [deleteOpen, setDeleteOpen] = React.useState<boolean>(false);
+  const [discardEditsOpen, setDiscardEditsOpen] = React.useState<boolean>(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [removedMarks, setRemovedMarks] = React.useState<Mark[]>([]);
   const [version, forceRender] = React.useReducer((x: number) => x + 1, 0);
@@ -126,6 +128,18 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     select(null);
     const mark = currentDraft.marks.splice(-1, 1)[0];
     setRemovedMarks((previous) => [...previous, mark]);
+    forceRender();
+    paint();
+  }
+
+  /** Back to the untouched image: every mark and the crop go; the image stays in the toss. */
+  function discardEdits(): void {
+    if (!currentDraft) {
+      return;
+    }
+    select(null);
+    currentDraft.marks = [];
+    setRemovedMarks([]);
     forceRender();
     paint();
   }
@@ -483,6 +497,27 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
               }}
             >
               {en.sendTo}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={discardEditsOpen} onOpenChange={setDiscardEditsOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{en.discardEditsTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{en.discardEditsDescription}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{en.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setDiscardEditsOpen(false);
+                discardEdits();
+              }}
+            >
+              {en.discard}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -846,6 +881,18 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             >
               <Redo2 className="h-4 w-4" />
             </Button>
+            {(currentDraft?.marks.length ?? 0) > 0 ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={en.discardEdits}
+                title={en.discardEdits}
+                className="h-10 w-10 rounded-full text-destructive hover:text-destructive"
+                onClick={() => setDiscardEditsOpen(true)}
+              >
+                <RotateCcw className="h-4 w-4" />
+              </Button>
+            ) : null}
             <div className="my-0.5 h-px w-6 bg-border" />
             {toolButtons.map(([name, label]) => (
               <Button
