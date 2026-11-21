@@ -281,7 +281,8 @@ function PhoneSendScreen({
 
         {known.length > 0 ? (
           <>
-            <div className="flex flex-col gap-3">
+            {/* centred in the free space, a little low: where the thumb rests */}
+            <div className="my-auto flex flex-col gap-3 pt-[6dvh]">
               <Input
                 ref={fileInputRef}
                 type="file"

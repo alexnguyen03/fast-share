@@ -1072,7 +1072,8 @@ function DesktopHistoryScreen({
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2">
+      {/* py: the selection ring is drawn outside each card; without room the scroll edge cuts it */}
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-2 py-1.5">
         {status.pending.length > 0 ? (
           <div className="flex flex-col gap-2">
             {status.pending.map((pending) => (
