@@ -1,3 +1,5 @@
+pub(crate) mod image_protocol;
+
 use std::time::Duration;
 
 use base64::Engine;
@@ -398,7 +400,8 @@ fn open_preview_window(
     use tauri::Manager;
     let payload = serde_json::json!({ "ids": ids, "index": index });
     if let Some(existing) = app.get_webview_window("preview") {
-        let _ = existing.emit("preview-open", &payload);
+        let _ = existing.emit_to("preview", "preview-open", &payload);
+        let _ = existing.show();
         let _ = existing.set_focus();
         return Ok(());
     }

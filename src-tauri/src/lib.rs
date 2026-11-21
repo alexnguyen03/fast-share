@@ -30,6 +30,17 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .register_asynchronous_uri_scheme_protocol(
+            commands::image_protocol::SCHEME,
+            |ctx, request, responder| {
+                let app = ctx.app_handle().clone();
+                let path = request.uri().path().to_string();
+                // file reads and thumbnail decoding stay off the main thread
+                std::thread::spawn(move || {
+                    responder.respond(commands::image_protocol::respond(&app, &path));
+                });
+            },
+        )
         .setup(|app| {
             #[cfg(mobile)]
             {
@@ -95,7 +106,9 @@ pub fn run() {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 #[cfg(not(any(target_os = "ios", target_os = "android")))]
                 {
-                    if QUIT.load(Ordering::Relaxed) {
+                    // Only the main window hides to the tray. Other windows (the image preview)
+                    // must really close, or the next "open preview" finds a hidden one.
+                    if QUIT.load(Ordering::Relaxed) || window.label() != "main" {
                         return;
                     }
                     let close_to_tray = window

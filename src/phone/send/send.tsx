@@ -282,6 +282,17 @@ function PhoneSendScreen({
         {known.length > 0 ? (
           <>
             <div className="flex flex-col gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                size="lg"
+                className="gap-2 rounded-2xl"
+                onClick={() => void openClipboard()}
+              >
+                <ClipboardPaste className="h-4 w-4" />
+                {en.sendClipboard}
+              </Button>
+
               <Input
                 ref={fileInputRef}
                 type="file"
@@ -325,82 +336,6 @@ function PhoneSendScreen({
                   </span>
                 </div>
               </Card>
-              {clip === null ? (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="lg"
-                  className="gap-2 rounded-2xl"
-                  onClick={() => void openClipboard()}
-                >
-                  <ClipboardPaste className="h-4 w-4" />
-                  {en.sendClipboard}
-                </Button>
-              ) : (
-                <Card className="flex flex-col gap-2.5 rounded-2xl border-0 bg-muted p-3 shadow-none">
-                  <div className="relative">
-                    <textarea
-                      ref={clipInputRef}
-                      value={clip}
-                      rows={5}
-                      placeholder={en.clipboardPlaceholder}
-                      aria-label={en.sendClipboard}
-                      onChange={(event) => {
-                        clipBatchRef.current = null; // edited text is a new message
-                        setClip(event.target.value);
-                      }}
-                      className="block w-full resize-none rounded-xl border-0 bg-background p-2.5 pb-9 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                    />
-                    {clip.length > 0 ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        className="absolute right-1.5 bottom-1.5 text-muted-foreground"
-                        disabled={clipSending}
-                        onClick={() => {
-                          clipBatchRef.current = null;
-                          setClip("");
-                          setClipError("");
-                          clipInputRef.current?.focus();
-                        }}
-                      >
-                        {en.clear}
-                      </Button>
-                    ) : null}
-                  </div>
-                  {clipError ? (
-                    <p className="m-0 text-xs text-destructive">{clipError}</p>
-                  ) : null}
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={clipSending}
-                      onClick={() => {
-                        clipBatchRef.current = null;
-                        setClip(null);
-                        setClipError("");
-                      }}
-                    >
-                      {en.cancel}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={clipSending || clip.trim().length === 0}
-                      onClick={() => void sendClipboardText()}
-                    >
-                      {clipSending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        en.sendText
-                      )}
-                    </Button>
-                  </div>
-                </Card>
-              )}
 
             </div>
           </>
@@ -422,6 +357,85 @@ function PhoneSendScreen({
           </Card>
         )}
       </div>
+
+      {clip !== null ? (
+        <div
+          data-no-swipe
+          className="fixed inset-0 z-40 flex flex-col bg-black/45 px-4 pt-[max(44px,calc(8px+env(safe-area-inset-top,0px)))]"
+          onClick={(event) => {
+            // a tap on the dimmed background closes it, like Cancel
+            if (event.target === event.currentTarget && !clipSending) {
+              clipBatchRef.current = null;
+              setClip(null);
+              setClipError("");
+            }
+          }}
+        >
+          <Card className="flex flex-col gap-2.5 rounded-2xl border-0 bg-muted p-3 shadow-xl">
+            <div className="relative">
+              <textarea
+                ref={clipInputRef}
+                value={clip}
+                rows={5}
+                placeholder={en.clipboardPlaceholder}
+                aria-label={en.sendClipboard}
+                onChange={(event) => {
+                  clipBatchRef.current = null; // edited text is a new message
+                  setClip(event.target.value);
+                }}
+                className="block w-full resize-none rounded-xl border-0 bg-background p-2.5 pb-9 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              />
+              {clip.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  className="absolute right-1.5 bottom-1.5 text-muted-foreground"
+                  disabled={clipSending}
+                  onClick={() => {
+                    clipBatchRef.current = null;
+                    setClip("");
+                    setClipError("");
+                    clipInputRef.current?.focus();
+                  }}
+                >
+                  {en.clear}
+                </Button>
+              ) : null}
+            </div>
+            {clipError ? (
+              <p className="m-0 text-xs text-destructive">{clipError}</p>
+            ) : null}
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={clipSending}
+                onClick={() => {
+                  clipBatchRef.current = null;
+                  setClip(null);
+                  setClipError("");
+                }}
+              >
+                {en.cancel}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={clipSending || clip.trim().length === 0}
+                onClick={() => void sendClipboardText()}
+              >
+                {clipSending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  en.sendText
+                )}
+              </Button>
+            </div>
+          </Card>
+        </div>
+      ) : null}
 
       <AlertDialog open={discardOpen} onOpenChange={setDiscardOpen}>
         <AlertDialogContent>
@@ -594,6 +608,10 @@ function openEditor(root: HTMLElement, drafts: Draft[]): void {
     onChange: () => keepDrafts(drafts),
     onClose: () => {
       keepDrafts(drafts);
+      void mountPhone(root, "send");
+    },
+    onDiscardAll: () => {
+      keepDrafts([]);
       void mountPhone(root, "send");
     },
     chooseTargets: async () => {

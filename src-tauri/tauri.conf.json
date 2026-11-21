@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'"
+      "csp": "default-src 'self'; img-src 'self' data: blob: fsimg: http://fsimg.localhost; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

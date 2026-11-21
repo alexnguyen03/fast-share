@@ -93,6 +93,7 @@ export const en = {
     "No camera? Open other ways to pair and type the computer's address.",
   ],
   discardEdits: "Discard edits",
+  discardAll: "Discard all",
   discardEditsTitle: "Discard your edits?",
   discardEditsDescription: "Every mark and the crop on this image go. The image stays.",
   pickComputersHint: "Tick every computer that should catch it.",

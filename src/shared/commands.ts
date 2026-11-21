@@ -1,4 +1,4 @@
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { en } from "./locales/en";
 import type { Settings } from "./settings";
@@ -501,6 +501,14 @@ export const api = {
       return Promise.resolve();
     }
     return invoke("delete_history_image", { imageId });
+  },
+
+  /**
+   * A URL an `<img>` loads directly (no base64 through the bridge): `thumb` is a small JPEG for
+   * lists, `full` the original file. Null outside the app, where callers fall back to base64.
+   */
+  imageUrl(imageId: string, kind: "thumb" | "full"): string | null {
+    return inTauri() ? convertFileSrc(`${kind}-${imageId}`, "fsimg") : null;
   },
 
   copyHistoryText(textId: string): Promise<void> {

@@ -43,6 +43,8 @@ export type Draft = {
 type Options = {
   drafts: Draft[];
   onClose: () => void;
+  /** Drops this whole toss: every image and its edits. */
+  onDiscardAll: () => void;
   onChange?: () => void;
   /** Asks which computers get the toss; false when the user backs out. */
   chooseTargets: () => Promise<boolean>;
@@ -97,6 +99,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   const [markup, setMarkup] = React.useState<boolean>(true);
   const [deleteOpen, setDeleteOpen] = React.useState<boolean>(false);
   const [discardEditsOpen, setDiscardEditsOpen] = React.useState<boolean>(false);
+  const [discardAllOpen, setDiscardAllOpen] = React.useState<boolean>(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [removedMarks, setRemovedMarks] = React.useState<Mark[]>([]);
   const [version, forceRender] = React.useReducer((x: number) => x + 1, 0);
@@ -430,6 +433,13 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
         >
           {en.done}
         </Button>
+        <Button
+          variant="ghost"
+          onClick={() => setDiscardAllOpen(true)}
+          className="mr-auto h-11 px-2 text-base text-destructive hover:text-destructive"
+        >
+          {en.discardAll}
+        </Button>
         <div className="flex items-center gap-1">
         <Button
           variant={markup ? "default" : "secondary"}
@@ -461,6 +471,29 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
         </div>
       </header>
 
+
+      <AlertDialog open={discardAllOpen} onOpenChange={setDiscardAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{en.discardDraftsTitle}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {en.discardDraftsDescription(options.drafts.length)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{en.cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setDiscardAllOpen(false);
+                options.onDiscardAll();
+              }}
+            >
+              {en.discard}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={discardEditsOpen} onOpenChange={setDiscardEditsOpen}>
         <AlertDialogContent>

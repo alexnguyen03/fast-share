@@ -17,7 +17,7 @@ import { applyTheme } from "../../shared/settings";
 import { Button } from "../../shared/ui/button";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import { showToast, Toaster } from "../../shared/ui/toast";
-import { formatBytes, relativeTime } from "../history/history";
+import { formatBytes, relativeTime, useImageSrc } from "../history/history";
 
 export type PreviewRequest = { ids: string[]; index: number };
 
@@ -72,10 +72,12 @@ function PreviewScreen({
   const [request, setRequest] = React.useState<PreviewRequest>(initial);
   const [batches, setBatches] = React.useState<HistoryBatch[]>(initialBatches);
   React.useEffect(() => setBatches(initialBatches), [initialBatches]);
-  const [src, setSrc] = React.useState<string>("");
+  const [fullReady, setFullReady] = React.useState<boolean>(false);
   const [zoom, setZoom] = React.useState<number>(1);
 
   const id = request.ids[request.index] ?? "";
+  const thumbSrc = useImageSrc(id, "thumb");
+  const fullSrc = useImageSrc(id, "full");
   const meta = findMeta(batches, id);
   const hasPrev = request.index > 0;
   const hasNext = request.index < request.ids.length - 1;
@@ -102,19 +104,7 @@ function PreviewScreen({
 
   React.useEffect(() => {
     setZoom(1);
-    setSrc("");
-    if (!id) {
-      return;
-    }
-    let cancelled = false;
-    void api.getHistoryImage(id).then((png) => {
-      if (!cancelled && png) {
-        setSrc(`data:image/png;base64,${png}`);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
+    setFullReady(false);
   }, [id]);
 
   React.useEffect(() => {
@@ -137,18 +127,84 @@ function PreviewScreen({
     return () => window.removeEventListener("keydown", onKey);
   }, [step]);
 
+  const info = [
+    meta?.phoneName,
+    meta ? relativeTime(meta.receivedAt) : "",
+    meta?.size ? formatBytes(meta.size) : "",
+    request.ids.length > 1 ? `${request.index + 1}/${request.ids.length}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const zoomStyle = { transform: `scale(${zoom})` };
+
   return (
-    <div className="fixed inset-0 flex flex-col bg-black/95 text-white select-none">
-      <div className="flex items-center justify-between gap-3 px-4 py-3">
-        <p className="m-0 truncate text-sm text-white/75">
-          {meta
-            ? [meta.phoneName, relativeTime(meta.receivedAt), meta.size ? formatBytes(meta.size) : ""]
-                .filter(Boolean)
-                .join(" · ")
-            : ""}
-          {request.ids.length > 1 ? ` · ${request.index + 1}/${request.ids.length}` : ""}
+    // data-tauri-drag-region: the empty black area moves the borderless window (to another screen too)
+    <div data-tauri-drag-region className="fixed inset-0 bg-black text-white select-none">
+      <div
+        data-tauri-drag-region
+        className="absolute inset-0 flex items-center justify-center overflow-auto"
+      >
+        {thumbSrc && !fullReady ? (
+          <img
+            src={thumbSrc}
+            alt={en.image}
+            draggable={false}
+            style={zoomStyle}
+            className="max-h-full max-w-full object-contain blur-[1px] transition-transform duration-150"
+          />
+        ) : null}
+        {fullSrc ? (
+          <img
+            key={id}
+            src={fullSrc}
+            alt={en.image}
+            draggable={false}
+            decoding="async"
+            onLoad={() => setFullReady(true)}
+            style={zoomStyle}
+            className={
+              fullReady
+                ? "max-h-full max-w-full object-contain transition-transform duration-150"
+                : "pointer-events-none absolute h-0 w-0 opacity-0"
+            }
+          />
+        ) : null}
+      </div>
+
+      {hasPrev ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={en.previous}
+          onClick={() => step(-1)}
+          className="absolute top-1/2 left-4 h-11 w-11 -translate-y-1/2 rounded-full bg-black/35 text-white backdrop-blur-md hover:bg-black/55 hover:text-white"
+        >
+          <ChevronLeft className="h-6 w-6" />
+        </Button>
+      ) : null}
+      {hasNext ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={en.next}
+          onClick={() => step(1)}
+          className="absolute top-1/2 right-4 h-11 w-11 -translate-y-1/2 rounded-full bg-black/35 text-white backdrop-blur-md hover:bg-black/55 hover:text-white"
+        >
+          <ChevronRight className="h-6 w-6" />
+        </Button>
+      ) : null}
+
+      <div
+        data-tauri-drag-region
+        className="absolute bottom-6 left-1/2 flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-full bg-black/45 py-1 pr-1 pl-4 shadow-lg ring-1 ring-white/10 backdrop-blur-md"
+      >
+        <p data-tauri-drag-region className="m-0 min-w-0 truncate text-sm text-white/80">
+          {info}
         </p>
-        <div className="flex items-center gap-1">
+        <span className="mx-1 h-5 w-px shrink-0 bg-white/20" />
+        <div className="flex shrink-0 items-center">
           <IconButton label={en.zoomOut} onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}>
             <ZoomOut className="h-4.5 w-4.5" />
           </IconButton>
@@ -158,7 +214,7 @@ function PreviewScreen({
           <IconButton label={en.zoomIn} onClick={() => setZoom((z) => Math.min(3, z + 0.25))}>
             <ZoomIn className="h-4.5 w-4.5" />
           </IconButton>
-          <span className="mx-1.5 h-5 w-px bg-white/20" />
+          <span className="mx-1 h-5 w-px bg-white/20" />
           <IconButton
             label={meta?.pinned ? en.unpinImage : en.pinImage}
             onClick={() => {
@@ -185,42 +241,6 @@ function PreviewScreen({
             <X className="h-5 w-5" />
           </IconButton>
         </div>
-      </div>
-
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto">
-        {src ? (
-          <img
-            src={src}
-            alt={en.image}
-            draggable={false}
-            style={{ transform: `scale(${zoom})` }}
-            className="max-h-full max-w-full object-contain transition-transform duration-150"
-          />
-        ) : null}
-        {hasPrev ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={en.previous}
-            onClick={() => step(-1)}
-            className="absolute top-1/2 left-4 h-11 w-11 -translate-y-1/2 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white"
-          >
-            <ChevronLeft className="h-6 w-6" />
-          </Button>
-        ) : null}
-        {hasNext ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={en.next}
-            onClick={() => step(1)}
-            className="absolute top-1/2 right-4 h-11 w-11 -translate-y-1/2 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white"
-          >
-            <ChevronRight className="h-6 w-6" />
-          </Button>
-        ) : null}
       </div>
       <Toaster />
     </div>

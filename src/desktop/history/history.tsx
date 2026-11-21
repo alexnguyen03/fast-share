@@ -91,6 +91,30 @@ async function loadPng(imageId: string): Promise<string> {
   return png;
 }
 
+/**
+ * In the app: a `fsimg` URL the browser loads lazily and caches. In the browser preview
+ * (no app), the old base64 path.
+ */
+export function useImageSrc(imageId: string, kind: "thumb" | "full"): string {
+  const direct = api.imageUrl(imageId, kind);
+  const [fallback, setFallback] = React.useState<string>("");
+  React.useEffect(() => {
+    if (direct) {
+      return;
+    }
+    let cancelled = false;
+    void loadPng(imageId).then((png) => {
+      if (!cancelled && png) {
+        setFallback(`data:image/png;base64,${png}`);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [direct, imageId]);
+  return direct ?? fallback;
+}
+
 export function relativeTime(iso: string): string {
   const elapsed = (Date.now() - new Date(iso).getTime()) / 60000;
   if (elapsed < 1) {
@@ -396,21 +420,9 @@ function HistoryTile({
   onEnterSelectMode: () => void;
   onDelete: () => void;
 }): React.JSX.Element {
-  const [src, setSrc] = React.useState<string>("");
+  const src = useImageSrc(item.imageId, "thumb");
   const dragOriginRef = React.useRef<{ x: number; y: number } | null>(null);
   const didDragRef = React.useRef<boolean>(false);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    void loadPng(item.imageId).then((png) => {
-      if (!cancelled && png) {
-        setSrc(`data:image/png;base64,${png}`);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [item.imageId]);
 
   return (
     <ContextMenu>
@@ -484,6 +496,8 @@ function HistoryTile({
               src={src}
               alt={en.image}
               draggable={false}
+              loading="lazy"
+              decoding="async"
               className="block h-full w-full select-none object-contain"
             />
           ) : null}

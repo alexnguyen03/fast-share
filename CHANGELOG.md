@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Desktop: the window ignored clicks for seconds after opening, and switching to Images was slow. Every tile pulled its whole file through a synchronous command as base64 (one photo was 45 MB). Tiles now load small cached thumbnails from an `fsimg://` protocol, lazily and off the main thread; the preview shows the thumbnail first and the original once it has loaded.
+- Desktop: a closed preview could not be opened again until restart. The close-to-tray rule hid every window, the preview included; now it applies to the main window only.
 - Desktop: the full-screen image preview opened as a frozen white window. It was created from a synchronous command, which deadlocks on Windows; the command is async now, and Esc always closes the preview.
 
 - iOS now vibrates after a toss: the capability named a haptics permission set the plugin does not define, so every haptic call was refused.

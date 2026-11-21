@@ -300,7 +300,7 @@ export function DesktopFrame({
         </ContextMenuContent>
       </ContextMenu>
       {isCollapsed ? null : (
-        <nav className="flex flex-col items-center gap-1 pt-2 pr-0.5">
+        <nav className="flex flex-col items-end gap-1.5 self-stretch pt-2">
           {navItems.map(({ view, Icon, label, badge }) => (
             <Button
               key={view}
@@ -309,9 +309,11 @@ export function DesktopFrame({
               aria-label={label}
               aria-pressed={active === view}
               title={label}
+              // solid chips: the window around them is transparent, so ghost buttons vanished
               className={cn(
-                "relative h-8 w-8 text-muted-foreground hover:text-foreground",
-                active === view && "bg-background text-primary hover:text-primary",
+                "relative h-8 w-8 rounded-l-[10px] rounded-r-none bg-background text-muted-foreground shadow-sm ring-1 ring-border hover:bg-secondary hover:text-foreground",
+                active === view &&
+                  "bg-primary text-primary-foreground ring-primary hover:bg-primary hover:text-primary-foreground",
               )}
               // the active screen's icon goes back to the history
               onClick={() => navigateDesktop(active === view ? "history" : view)}
