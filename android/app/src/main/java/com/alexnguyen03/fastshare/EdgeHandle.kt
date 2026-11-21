@@ -8,6 +8,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -132,7 +133,8 @@ class EdgeHandle(
     try {
       wm.addView(root, params)
       view = root
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+      Log.w("FastShareOverlay", "could not add the edge handle", e)
     }
   }
 

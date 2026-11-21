@@ -146,6 +146,8 @@ export const en = {
   handleSideLeft: "Left",
   handleSideRight: "Right",
   quickCaptureSetup: "Turn on Fast Share in Accessibility to show the handle.",
+  quickCaptureNotRunning:
+    "Accessibility is on but Fast Share is not running, so the handle cannot show. Turn the Fast Share switch off and on again. On Xiaomi also allow Autostart and set Battery saver to No restrictions, or the system stops it when you leave the app.",
   quickCaptureRestricted: "If the switch is greyed out, open App info, tap ⋮ and choose Allow restricted settings.",
   openAppInfo: "App info",
   openAccessibility: "Accessibility",

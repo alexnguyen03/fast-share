@@ -35,6 +35,7 @@ class FastShareOverlayService : AccessibilityService() {
   override fun onServiceConnected() {
     super.onServiceConnected()
     instance = this
+    Log.i(TAG, "service connected, app in front: ${MainActivity.isForeground}")
     appForeground = MainActivity.isForeground
     registerReceiver(
       screenReceiver,

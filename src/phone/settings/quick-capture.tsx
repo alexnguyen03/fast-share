@@ -10,6 +10,8 @@ type OverlayState = {
   enabled: boolean;
   side: "left" | "right";
   accessibility: boolean;
+  /** The accessibility service is actually running, not only switched on in system settings. */
+  connected: boolean;
   openOnScreenshot: boolean;
   xiaomi: boolean;
 };
@@ -112,6 +114,18 @@ export function QuickCaptureCard(): React.JSX.Element | null {
               {en.openAccessibility}
             </Button>
           </div>
+        </div>
+      )}
+      {state.accessibility && !state.connected && (
+        <div className="flex flex-col gap-2 text-xs text-destructive">
+          <p className="m-0">{en.quickCaptureNotRunning}</p>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => bridge.openAccessibilitySettings()}
+          >
+            {en.openAccessibility}
+          </Button>
         </div>
       )}
       {state.xiaomi && (

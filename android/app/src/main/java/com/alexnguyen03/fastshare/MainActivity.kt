@@ -84,6 +84,8 @@ class MainActivity : TauriActivity() {
       .put("side", OverlayPrefs.side(this@MainActivity))
       .put("openOnScreenshot", OverlayPrefs.openOnScreenshot(this@MainActivity))
       .put("accessibility", FastShareOverlayService.isEnabled(this@MainActivity))
+      // Enabled in system settings is not the same as running: HyperOS can leave the service stopped.
+      .put("connected", FastShareOverlayService.instance != null)
       .put("xiaomi", Build.MANUFACTURER.lowercase() in listOf("xiaomi", "redmi", "poco"))
       .toString()
 
