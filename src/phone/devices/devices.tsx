@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronLeft, CircleHelp, Laptop, Loader2, QrCode, RefreshCw } from "lucide-react";
+import { ChevronLeft, CircleHelp, Laptop, Loader2, QrCode } from "lucide-react";
 import {
   api,
   type Destination,
@@ -28,6 +28,7 @@ import { Input } from "../../shared/ui/input";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import { showToast, Toaster } from "../../shared/ui/toast";
 import { PhoneFrame, type PhoneTab } from "../frame";
+import { PullToRefresh } from "../pull-to-refresh";
 import { errorText, latestNote, note } from "../log";
 
 function runningInApp(): boolean {
@@ -381,20 +382,13 @@ export function PhoneDevicesScreen({
         <h1 className="m-0 text-center text-lg font-semibold text-foreground">
           {en.devicesTitle}
         </h1>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={en.refreshNearby}
-          title={en.refreshNearby}
-          onClick={() => {
-            void refreshNearby();
-          }}
-        >
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+        <span aria-hidden="true" />
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pt-1">
+      <PullToRefresh
+        onRefresh={refreshNearby}
+        className="-mx-1 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-1 pt-1 pb-1"
+      >
         {pairing ? (
           <Card className="flex flex-col gap-2 border-0 bg-accent p-3">
             <div className="flex items-center gap-2">
@@ -608,7 +602,7 @@ export function PhoneDevicesScreen({
           ) : null}
         </Card>
 
-      </div>
+      </PullToRefresh>
 
       <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
         <DialogContent>

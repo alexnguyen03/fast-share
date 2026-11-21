@@ -104,7 +104,8 @@ export function PhoneSettingsScreen({
         </Button>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pt-1">
+      {/* px-1 with -mx-1: room for the field outlines, which the scroll edge would clip */}
+      <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1 pt-1 pb-1">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="phoneName">{en.phoneName}</Label>
           <Input

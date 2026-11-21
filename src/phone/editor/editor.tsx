@@ -1,7 +1,6 @@
 import * as React from "react";
 import {
   ArrowUpRight,
-  ChevronDown,
   Crop,
   ChevronLeft,
   ChevronRight,
@@ -42,12 +41,11 @@ export type Draft = {
 };
 
 type Options = {
-  pcName: string;
-  online: boolean;
   drafts: Draft[];
   onClose: () => void;
-  onSwitch: () => void;
   onChange?: () => void;
+  /** Asks which computers get the toss; false when the user backs out. */
+  chooseTargets: () => Promise<boolean>;
   onSend: (batchId: string, images: string[]) => Promise<void>;
 };
 
@@ -96,7 +94,6 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   const textTapRef =React.useRef<{ x: number; y: number } | null>(null);
   const [sending, setSending] = React.useState<boolean>(false);
   const [statusLine, setStatusLine] = React.useState<string>("");
-  const [switchConfirmOpen, setSwitchConfirmOpen] = React.useState<boolean>(false);
   const [markup, setMarkup] = React.useState<boolean>(true);
   const [deleteOpen, setDeleteOpen] = React.useState<boolean>(false);
   const [discardEditsOpen, setDiscardEditsOpen] = React.useState<boolean>(false);
@@ -373,6 +370,11 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
   async function handleSend(): Promise<void> {
     setSending(true);
     setStatusLine("");
+    // Ask where to toss before the slow part, so the dialog appears at once.
+    if (!(await options.chooseTargets())) {
+      setSending(false);
+      return;
+    }
     const batchId = pendingBatchIdRef.current ?? newBatchId();
     pendingBatchIdRef.current = batchId;
     try {
@@ -383,11 +385,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
       await options.onSend(batchId, images);
       pendingBatchIdRef.current = null;
     } catch (error) {
-      setStatusLine(
-        error instanceof Error
-          ? error.message
-          : en.didNotReceive(options.pcName),
-      );
+      setStatusLine(error instanceof Error ? error.message : en.tossFailed);
       setSending(false);
     }
   }
@@ -432,22 +430,6 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
         >
           {en.done}
         </Button>
-        <Button
-          variant="secondary"
-          aria-label={`${en.toComputer(options.pcName)} - ${options.online ? en.onlineStatus : en.offlineStatus}`}
-          className="h-9 min-w-0 justify-center gap-2 rounded-full px-3.5"
-          onClick={() => {
-            if (options.drafts.some((item) => item.marks.length > 0)) {
-              setSwitchConfirmOpen(true);
-              return;
-            }
-            options.onSwitch();
-          }}
-        >
-          <span className={options.online ? "dot on shrink-0" : "dot shrink-0"} />
-          <span className="truncate">{en.toComputer(options.pcName)}</span>
-          <ChevronDown className="h-4 w-4 shrink-0 opacity-75" />
-        </Button>
         <div className="flex items-center gap-1">
         <Button
           variant={markup ? "default" : "secondary"}
@@ -479,28 +461,6 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
         </div>
       </header>
 
-      <AlertDialog
-        open={switchConfirmOpen}
-        onOpenChange={setSwitchConfirmOpen}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{en.sendTo}</AlertDialogTitle>
-            <AlertDialogDescription>{en.switchComputer}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{en.cancel}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                setSwitchConfirmOpen(false);
-                options.onSwitch();
-              }}
-            >
-              {en.sendTo}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={discardEditsOpen} onOpenChange={setDiscardEditsOpen}>
         <AlertDialogContent>
@@ -881,18 +841,18 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             >
               <Redo2 className="h-4 w-4" />
             </Button>
-            {(currentDraft?.marks.length ?? 0) > 0 ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={en.discardEdits}
-                title={en.discardEdits}
-                className="h-10 w-10 rounded-full text-destructive hover:text-destructive"
-                onClick={() => setDiscardEditsOpen(true)}
-              >
-                <RotateCcw className="h-4 w-4" />
-              </Button>
-            ) : null}
+            {/* Always in the bar so it can be found; greyed out until there is an edit. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={en.discardEdits}
+              title={en.discardEdits}
+              disabled={(currentDraft?.marks.length ?? 0) === 0}
+              className="h-10 w-10 rounded-full text-destructive hover:text-destructive"
+              onClick={() => setDiscardEditsOpen(true)}
+            >
+              <RotateCcw className="h-4 w-4" />
+            </Button>
             <div className="my-0.5 h-px w-6 bg-border" />
             {toolButtons.map(([name, label]) => (
               <Button

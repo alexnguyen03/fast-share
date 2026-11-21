@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Desktop: the full-screen image preview opened as a frozen white window. It was created from a synchronous command, which deadlocks on Windows; the command is async now, and Esc always closes the preview.
+
 - iOS now vibrates after a toss: the capability named a haptics permission set the plugin does not define, so every haptic call was refused.
 - iOS no longer zooms in when a field gets focus, and pinch zoom is off.
 
@@ -20,8 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Desktop: Save forever for texts as well as images; saved items survive old-history cleanup and Delete all.
 - Desktop: keys `i` `c` `s` `d` `h` `t`, Enter or Ctrl+C to copy, and Ctrl+Shift+Space anywhere to bring the app up or put it away.
 - Desktop: image preview fills the screen, with icon buttons and the file size; deleting an image asks first.
-- Phone: the header and tab bar stay put, and a sideways swipe changes tab.
-- Phone: tick one or more computers under Destination; text and images go to each of them.
+- Phone: the header and tab bar stay put, a sideways swipe changes tab, and only the current tab shows its name.
+- Phone: tossing asks which computers should catch it (tick one or more); with one paired computer it goes straight there. The image picker fills the top half of Send.
+- Phone: pull down on Devices to refresh.
 - Phone: Discard edits in the editor, a "?" with pairing help and network details, and the Wi-Fi name next to "On this Wi-Fi" (asks for location permission, which iOS and Android require for it).
 - Repository documents, contributor templates, and the local pairing protocol notes.
 - Tauri host that pairs a phone, stores validated images, notifies, and purges history from settings.

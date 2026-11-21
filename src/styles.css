@@ -216,8 +216,9 @@
   html.phone .panel,
   html.phone .editor {
     min-height: 100%;
-    padding-top: max(56px, calc(16px + env(safe-area-inset-top, 0px)));
-    padding-bottom: max(28px, calc(16px + env(safe-area-inset-bottom, 0px)));
+    /* Android's WebView may report no insets, so the minimums still clear the status bar and gesture bar. */
+    padding-top: max(44px, calc(8px + env(safe-area-inset-top, 0px)));
+    padding-bottom: max(14px, calc(4px + env(safe-area-inset-bottom, 0px)));
   }
 
   h1,
@@ -295,6 +296,12 @@ html.phone textarea {
 html.phone input:not([type="file"]):not([type="checkbox"]):not(:focus),
 html.phone textarea:not(:focus) {
   box-shadow: 0 0 0 1px var(--border);
+}
+
+/* The preview window is black from the first frame, not a white flash. */
+html.preview,
+html.preview body {
+  background: #000;
 }
 
 /* Desktop scrollbars: thin, and only visible while the pointer is over the list. */

@@ -59,54 +59,35 @@ export function PhoneFrame({
         {children}
       </div>
 
-      <footer className="mt-auto flex items-center justify-around pt-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => onSelectTab("send")}
-          className={cn(
-            "flex h-auto flex-col items-center gap-1 rounded-xl px-4 py-1.5 text-xs",
-            activeTab === "send"
-              ? "font-semibold text-primary"
-              : "text-muted-foreground",
-          )}
-        >
-          <Send className="h-5 w-5" />
-          <span>{en.sendTab}</span>
-        </Button>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => onSelectTab("devices")}
-          className={cn(
-            "flex h-auto flex-col items-center gap-1 rounded-xl px-4 py-1.5 text-xs",
-            activeTab === "devices"
-              ? "font-semibold text-primary"
-              : "text-muted-foreground",
-          )}
-        >
-          <Laptop className="h-5 w-5" />
-          <span>{en.devicesTitle}</span>
-        </Button>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => onSelectTab("settings")}
-          className={cn(
-            "flex h-auto flex-col items-center gap-1 rounded-xl px-4 py-1.5 text-xs",
-            activeTab === "settings"
-              ? "font-semibold text-primary"
-              : "text-muted-foreground",
-          )}
-        >
-          <SettingsIcon className="h-5 w-5" />
-          <span>{en.settings}</span>
-        </Button>
+      <footer className="mt-auto flex items-center justify-around">
+        {(
+          [
+            ["send", Send, en.sendTab],
+            ["devices", Laptop, en.devicesTitle],
+            ["settings", SettingsIcon, en.settings],
+          ] as const
+        ).map(([tab, Icon, label]) => {
+          const active = activeTab === tab;
+          return (
+            <Button
+              key={tab}
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={label}
+              aria-current={active ? "page" : undefined}
+              onClick={() => onSelectTab(tab)}
+              className={cn(
+                "flex h-11 items-center gap-1.5 rounded-full px-4 text-sm",
+                active ? "bg-accent font-semibold text-primary" : "text-muted-foreground",
+              )}
+            >
+              <Icon className="h-5 w-5" />
+              {/* only the current tab names itself; the others are icons */}
+              {active ? <span>{label}</span> : null}
+            </Button>
+          );
+        })}
       </footer>
       <Toaster />
     </section>

@@ -1,7 +1,6 @@
 import * as React from "react";
 import {
   ArrowUpFromLine,
-  ChevronLeft,
   ClipboardPaste,
   Laptop,
   Loader2,
@@ -20,10 +19,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../../shared/ui/alert-dialog";
-import { cn } from "../../shared/lib/utils";
 import { Button } from "../../shared/ui/button";
 import { Card } from "../../shared/ui/card";
-import { Checkbox } from "../../shared/ui/checkbox";
 import { Input } from "../../shared/ui/input";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import { showToast } from "../../shared/ui/toast";
@@ -34,39 +31,10 @@ import { loadDrafts, saveDrafts } from "../draft-store";
 import { buzzIfEnabled } from "../haptics";
 import { errorText, note } from "../log";
 import { mountPhoneSettings } from "../settings/settings";
+import { pickTargets } from "./target-picker";
 
 let inboxBound = false;
 let takingInbox = false;
-
-const TARGETS_KEY = "fs.phone.targets";
-const DESTINATIONS_SHOWN = 3;
-
-function loadTargets(): string[] {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(TARGETS_KEY) ?? "[]");
-    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveTargets(ids: string[]): void {
-  try {
-    localStorage.setItem(TARGETS_KEY, JSON.stringify(ids));
-  } catch {
-    // only a convenience: the first computer is picked next time
-  }
-}
-
-/** The remembered targets that still exist, else the first online (or first known) computer. */
-function initialTargets(known: Destination[]): string[] {
-  const kept = loadTargets().filter((id) => known.some((pc) => pc.pcId === id));
-  if (kept.length > 0) {
-    return kept;
-  }
-  const first = known.find((pc) => pc.online) ?? known[0];
-  return first ? [first.pcId] : [];
-}
 
 /** Sends to each computer in turn; resolves with the names that failed, with their errors. */
 async function sendToEach(
@@ -199,14 +167,12 @@ function PhoneSendScreen({
 }: {
   initialKnown: Destination[];
   pending: Draft[] | null;
-  onPickImages: (imagesBase64: string[], targetPcIds: string[]) => void;
+  onPickImages: (imagesBase64: string[]) => void;
   onResumeDrafts: () => void;
   onDiscardDrafts: () => void;
   onSelectTab: (tab: PhoneTab) => void;
 }): React.JSX.Element {
-  const [known, setKnown] = React.useState<Destination[]>(initialKnown);
-  const [targetIds, setTargetIds] = React.useState<string[]>(() => initialTargets(initialKnown));
-  const [showAllPcs, setShowAllPcs] = React.useState<boolean>(false);
+  const known = initialKnown;
   const [discardOpen, setDiscardOpen] = React.useState<boolean>(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   // null = clipboard card closed; a string (possibly empty) = preview open.
@@ -239,13 +205,18 @@ function PhoneSendScreen({
   }, [openClipboard]);
 
   const sendClipboardText = async (): Promise<void> => {
-    if (targets.length === 0 || clip === null) {
+    if (clip === null) {
+      return;
+    }
+    setClipSending(true);
+    setClipError("");
+    const targets = await pickTargets();
+    if (!targets) {
+      setClipSending(false);
       return;
     }
     const batchId = clipBatchRef.current ?? newTextBatchId();
     clipBatchRef.current = batchId; // a retry of the same text reuses it, so no computer stores it twice
-    setClipSending(true);
-    setClipError("");
     const text = clip;
     const { ok, failed } = await sendToEach(targets, (pc) => api.sendText(pc.pcId, batchId, text));
     setClipSending(false);
@@ -265,39 +236,6 @@ function PhoneSendScreen({
     );
   };
 
-  React.useEffect(() => {
-    let cancelled = false;
-    void api
-      .discoverDestinations()
-      .then((discovered) => {
-        if (!cancelled && discovered.length > 0) {
-          setKnown(discovered);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const targets = known.filter((pc) => targetIds.includes(pc.pcId));
-  const toggleTarget = (pcId: string): void => {
-    setTargetIds((current) => {
-      const next = current.includes(pcId)
-        ? current.filter((id) => id !== pcId)
-        : [...current, pcId];
-      saveTargets(next);
-      return next;
-    });
-  };
-  // Online first; only the first few unless the list is opened, but a ticked one always shows.
-  const sortedPcs = [...known.filter((pc) => pc.online), ...known.filter((pc) => !pc.online)];
-  const shownPcs = showAllPcs
-    ? sortedPcs
-    : sortedPcs.filter(
-        (pc, index) => index < DESTINATIONS_SHOWN || targetIds.includes(pc.pcId),
-      );
-
   return (
     <PhoneFrame activeTab="send" onSelectTab={onSelectTab}>
       <header className="flex min-h-9 items-center gap-2.5">
@@ -306,7 +244,7 @@ function PhoneSendScreen({
         </h1>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pt-1">
+      <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1 pt-1 pb-1">
         {pending && pending.length > 0 ? (
           <Card className="flex items-center gap-2.5 rounded-2xl border-0 bg-accent px-3 py-2.5">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
@@ -343,59 +281,50 @@ function PhoneSendScreen({
 
         {known.length > 0 ? (
           <>
-            <div className="flex flex-col gap-1.5">
-              <span className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                {en.destinationLabel}
-              </span>
-              <Card className="flex flex-col gap-0.5 border-0 bg-muted p-1.5 shadow-none">
-                {shownPcs.map((pc) => {
-                  const checked = targetIds.includes(pc.pcId);
-                  return (
-                    <label
-                      key={pc.pcId}
-                      className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl px-2.5 active:bg-secondary"
-                    >
-                      <Checkbox
-                        checked={checked}
-                        onCheckedChange={() => toggleTarget(pc.pcId)}
-                        aria-label={pc.name}
-                      />
-                      <Laptop
-                        aria-hidden="true"
-                        className={cn(
-                          "h-5 w-5 shrink-0",
-                          pc.online ? "text-success" : "text-muted-foreground/60",
-                        )}
-                      />
-                      <span
-                        className={cn(
-                          "min-w-0 flex-1 truncate text-sm font-semibold",
-                          pc.online ? "text-foreground" : "text-muted-foreground",
-                        )}
-                      >
-                        {pc.name}
-                      </span>
-                      <span className="sr-only">
-                        {pc.online ? en.onlineStatus : en.offlineStatus}
-                      </span>
-                    </label>
-                  );
-                })}
-                {sortedPcs.length > shownPcs.length || showAllPcs ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground"
-                    onClick={() => setShowAllPcs((open) => !open)}
-                  >
-                    {showAllPcs ? en.showFewer : en.showAllComputers(sortedPcs.length)}
-                  </Button>
-                ) : null}
-              </Card>
-            </div>
+            <div className="flex flex-col gap-3">
+              <Input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  const files = Array.from(event.target.files ?? []);
+                  if (files.length === 0) {
+                    return;
+                  }
+                  void filesToBase64(files).then((encoded) => {
+                    if (encoded.length > 0) {
+                      onPickImages(encoded);
+                    }
+                  });
+                }}
+              />
 
-            {/* Toss controls sit low on the screen, where the thumb is. */}
-            <div className="mt-auto flex flex-col gap-3">
+              <Card
+                role="button"
+                tabIndex={0}
+                onClick={() => fileInputRef.current?.click()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+                className="flex h-[50dvh] cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-0 bg-accent px-5 text-center transition-transform focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none active:scale-[0.99]"
+              >
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                  <ArrowUpFromLine className="h-6 w-6" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-base font-semibold text-foreground">
+                    {en.pickImages}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {en.tapToPickPhotos}
+                  </span>
+                </div>
+              </Card>
               {clip === null ? (
                 <Button
                   type="button"
@@ -460,7 +389,7 @@ function PhoneSendScreen({
                     <Button
                       type="button"
                       size="sm"
-                      disabled={clipSending || clip.trim().length === 0 || targets.length === 0}
+                      disabled={clipSending || clip.trim().length === 0}
                       onClick={() => void sendClipboardText()}
                     >
                       {clipSending ? (
@@ -473,57 +402,6 @@ function PhoneSendScreen({
                 </Card>
               )}
 
-              <Input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(event) => {
-                  const files = Array.from(event.target.files ?? []);
-                  if (files.length === 0) {
-                    return;
-                  }
-                  void filesToBase64(files).then((encoded) => {
-                    if (encoded.length > 0) {
-                      onPickImages(encoded, targetIds);
-                    }
-                  });
-                }}
-              />
-
-              <Card
-                role="button"
-                tabIndex={0}
-                aria-disabled={targets.length === 0}
-                onClick={() => {
-                  if (targets.length > 0) {
-                    fileInputRef.current?.click();
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if ((event.key === "Enter" || event.key === " ") && targets.length > 0) {
-                    event.preventDefault();
-                    fileInputRef.current?.click();
-                  }
-                }}
-                className={cn(
-                  "flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border-0 bg-accent px-5 py-9 text-center transition-transform focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none active:scale-[0.99]",
-                  targets.length === 0 && "cursor-not-allowed opacity-50",
-                )}
-              >
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground">
-                  <ArrowUpFromLine className="h-6 w-6" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-base font-semibold text-foreground">
-                    {en.pickImages}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {targets.length === 0 ? en.pickDestinationFirst : en.tapToPickPhotos}
-                  </span>
-                </div>
-              </Card>
             </div>
           </>
         ) : (
@@ -606,8 +484,8 @@ async function consumeInbox(
       <PhoneSendScreen
         initialKnown={known}
         pending={pendingDrafts}
-        onPickImages={(pickedBase64, targetPcIds) => {
-          void openDrafts(root, pickedBase64, targetPcIds);
+        onPickImages={(pickedBase64) => {
+          void openDrafts(root, pickedBase64);
         }}
         onResumeDrafts={() => {
           const drafts = pendingDrafts;
@@ -632,7 +510,6 @@ async function consumeInbox(
 export async function openDrafts(
   root: HTMLElement,
   imagesBase64: string[],
-  preferredPcIds?: string[],
 ): Promise<void> {
   const existing = pendingDrafts ?? [];
   keepDrafts([]);
@@ -645,99 +522,16 @@ export async function openDrafts(
       marks: [],
     })),
   ];
-  await chooseDestination(root, drafts, preferredPcIds);
+  await chooseDestination(root, drafts);
 }
 
-async function chooseDestination(
-  root: HTMLElement,
-  drafts: Draft[],
-  // the computers ticked on the Send screen; shared or resumed images go to the same ones
-  preferredPcIds: string[] = loadTargets(),
-): Promise<void> {
+async function chooseDestination(root: HTMLElement, drafts: Draft[]): Promise<void> {
   const known = await api.listKnownPcs();
-  const chosen = known.filter((item) => preferredPcIds.includes(item.pcId));
-  if (chosen.length > 0) {
-    openEditor(root, drafts, chosen.map((pc) => ({ ...pc, online: true })), known);
-    return;
-  }
-  if (known.length === 1) {
-    openEditor(root, drafts, [{ ...known[0], online: true }], known);
-    void api.discoverDestinations().then((discovered) => {
-      const updated = discovered.find((item) => item.pcId === known[0].pcId);
-      const dot = root.querySelector<HTMLElement>(".editor .dot");
-      if (dot && updated) {
-        dot.classList.toggle("on", updated.online);
-      }
-    });
-    return;
-  }
-  const destinations = await api.discoverDestinations();
-  const online = destinations.filter((pc) => pc.online);
-  if (online.length === 0) {
-    if (known.length > 0) {
-      openEditor(root, drafts, [known[0]], known);
-      return;
-    }
+  if (known.length === 0) {
     showOffline(root, drafts);
     return;
   }
-  if (online.length === 1) {
-    openEditor(root, drafts, [online[0]], destinations);
-    return;
-  }
-  showSheet(root, drafts, online, destinations);
-}
-
-function showSheet(
-  root: HTMLElement,
-  drafts: Draft[],
-  online: Destination[],
-  all: Destination[],
-): void {
-  const reactRoot = getOrCreateRoot(root);
-  const leaveWithDrafts = (tab: PhoneTab): void => {
-    keepDrafts(drafts);
-    navigateTab(root, tab);
-  };
-  reactRoot.render(
-    <PhoneFrame activeTab="send" onSelectTab={leaveWithDrafts}>
-      <header className="flex min-h-9 items-center gap-1.5">
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={en.back}
-          title={en.back}
-          className="h-11 w-11 shrink-0 rounded-full"
-          onClick={() => {
-            keepDrafts(drafts);
-            void mountPhone(root, "send");
-          }}
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </Button>
-        <h1 className="m-0 text-lg font-semibold text-foreground">
-          {en.sendTo}
-        </h1>
-      </header>
-      <Card className="flex flex-col gap-1.5 border-0 bg-muted p-3 shadow-none">
-        {online.map((pc) => (
-          <Button
-            key={pc.pcId}
-            variant="secondary"
-            className="w-full justify-start gap-2.5"
-            disabled={!pc.online}
-            onClick={() => openEditor(root, drafts, [pc], all)}
-          >
-            <Laptop className="h-4 w-4 text-primary" />
-            <span>{pc.name}</span>
-          </Button>
-        ))}
-      </Card>
-      <p className="mt-auto text-center text-xs text-muted-foreground">
-        {en.draftsWaiting(drafts.length)}
-      </p>
-    </PhoneFrame>,
-  );
+  openEditor(root, drafts);
 }
 
 function showOffline(root: HTMLElement, drafts: Draft[]): void {
@@ -792,27 +586,23 @@ function showOffline(root: HTMLElement, drafts: Draft[]): void {
   );
 }
 
-function openEditor(
-  root: HTMLElement,
-  drafts: Draft[],
-  pcs: Destination[],
-  all: Destination[],
-): void {
+function openEditor(root: HTMLElement, drafts: Draft[]): void {
   keepDrafts(drafts);
-  const names = joinNames(pcs);
+  let targets: Destination[] = [];
   mountEditor(root, {
-    pcName: names,
-    online: pcs.some((pc) => pc.online),
     drafts,
     onChange: () => keepDrafts(drafts),
     onClose: () => {
       keepDrafts(drafts);
       void mountPhone(root, "send");
     },
-    onSwitch: () => showSheet(root, drafts, all, all),
+    chooseTargets: async () => {
+      targets = (await pickTargets()) ?? [];
+      return targets.length > 0;
+    },
     onSend: async (batchId, images) => {
       // The same batch id to every computer: a retry after a partial failure is not stored twice.
-      const { ok, failed } = await sendToEach(pcs, (pc) => api.sendBatch(pc.pcId, batchId, images));
+      const { ok, failed } = await sendToEach(targets, (pc) => api.sendBatch(pc.pcId, batchId, images));
       if (ok.length > 0) {
         buzzIfEnabled();
       }
@@ -825,6 +615,7 @@ function openEditor(
         throw new Error(message);
       }
       keepDrafts([]);
+      const names = joinNames(ok);
       const sentMsg =
         images.length === 1 ? `${en.sentTo(names)} · ${en.pasteReady}` : en.sentTo(names);
       note(sentMsg);

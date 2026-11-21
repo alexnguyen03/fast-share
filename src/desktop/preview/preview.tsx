@@ -71,6 +71,7 @@ function PreviewScreen({
 }): React.JSX.Element {
   const [request, setRequest] = React.useState<PreviewRequest>(initial);
   const [batches, setBatches] = React.useState<HistoryBatch[]>(initialBatches);
+  React.useEffect(() => setBatches(initialBatches), [initialBatches]);
   const [src, setSrc] = React.useState<string>("");
   const [zoom, setZoom] = React.useState<number>(1);
 
@@ -227,7 +228,10 @@ function PreviewScreen({
 }
 
 export async function mountPreview(root: HTMLElement, request: PreviewRequest): Promise<void> {
+  // Draw first: the image and the close button do not need the history list.
+  const reactRoot = getOrCreateRoot(root);
+  reactRoot.render(<PreviewScreen initial={request} initialBatches={[]} />);
   const [batches, settings] = await Promise.all([api.listHistory(), api.getSettings()]);
   applyTheme(settings.theme);
-  getOrCreateRoot(root).render(<PreviewScreen initial={request} initialBatches={batches} />);
+  reactRoot.render(<PreviewScreen initial={request} initialBatches={batches} />);
 }

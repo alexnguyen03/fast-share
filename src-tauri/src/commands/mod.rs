@@ -370,8 +370,10 @@ pub(crate) fn summon_or_hide(app: &tauri::AppHandle) {
 }
 
 /// Opens the full-screen preview on the monitor the app is on; `ids` is the list to step through.
+/// Must stay `async`: building a window inside a synchronous command deadlocks on Windows
+/// (the new window stays white and the whole app freezes).
 #[tauri::command]
-pub(crate) fn open_preview(
+pub(crate) async fn open_preview(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
     ids: Vec<String>,
