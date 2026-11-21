@@ -1,10 +1,11 @@
 {
   "identifier": "default",
   "description": "Fast Share window permissions",
-  "windows": ["main"],
+  "windows": ["main", "preview"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-close",
     "notification:default",
     "opener:default"
   ]

@@ -287,6 +287,129 @@ pub(crate) fn toggle_dock_expanded(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, SharedHost>,
 ) -> Result<WindowPrefs, String> {
+    set_dock_expanded(&window, &state, None)
+}
+
+/// `h` in the app: tuck the window into the nearest screen edge, collapsed to its tab.
+#[tauri::command]
+pub(crate) fn hide_to_edge(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, SharedHost>,
+) -> Result<WindowPrefs, String> {
+    let mut prefs = state.lock().map_err(text_err)?.window_prefs.clone();
+    if prefs.dock_edge.is_some() {
+        return set_dock_expanded(&window, &state, Some(false));
+    }
+    let pos = window.outer_position().map_err(|error| error.to_string())?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    let monitor = window
+        .current_monitor()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "no monitor".to_string())?;
+    let work = monitor.work_area();
+    let left = pos.x - work.position.x;
+    let right = work.position.x + work.size.width as i32 - (pos.x + size.width as i32);
+    let edge = if left <= right { DockEdge::Left } else { DockEdge::Right };
+    prefs.snap_to_edge = true;
+    prefs.dock_edge = Some(edge);
+    prefs.dock_expanded = false;
+    prefs.dock_x = pos.x;
+    prefs.dock_y = pos.y;
+    set_window_always_on_top(&window, true);
+    apply_dock_geometry(&window, edge, false, pos.x, pos.y);
+    state.lock().map_err(text_err)?.window_prefs = prefs.clone();
+    let _ = window.emit("dock-state", &prefs);
+    Ok(prefs)
+}
+
+/// The global shortcut: bring Fast Share up, or put it away when it is already in front.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub(crate) fn summon_or_hide(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let (Some(window), Some(state)) = (
+        app.get_webview_window("main"),
+        app.try_state::<SharedHost>(),
+    ) else {
+        return;
+    };
+    let Ok(prefs) = state.lock().map(|host| host.window_prefs.clone()) else {
+        return;
+    };
+    let in_front = window.is_visible().unwrap_or(false)
+        && !window.is_minimized().unwrap_or(false)
+        && window.is_focused().unwrap_or(false);
+    let open = prefs.dock_edge.is_none() || prefs.dock_expanded;
+    if in_front && open {
+        if prefs.dock_edge.is_some() {
+            let _ = set_dock_expanded(&window, &state, Some(false));
+        } else {
+            let _ = window.hide();
+        }
+        return;
+    }
+    let _ = window.show();
+    let _ = window.unminimize();
+    if prefs.dock_edge.is_some() && !prefs.dock_expanded {
+        let _ = set_dock_expanded(&window, &state, Some(true));
+    }
+    let _ = window.set_focus();
+}
+
+/// Opens the full-screen preview on the monitor the app is on; `ids` is the list to step through.
+#[tauri::command]
+pub(crate) fn open_preview(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    ids: Vec<String>,
+    index: usize,
+) -> Result<(), String> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = (app, window, ids, index);
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    open_preview_window(app, window, ids, index)
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn open_preview_window(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    ids: Vec<String>,
+    index: usize,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let payload = serde_json::json!({ "ids": ids, "index": index });
+    if let Some(existing) = app.get_webview_window("preview") {
+        let _ = existing.emit("preview-open", &payload);
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+    let mut builder = tauri::WebviewWindowBuilder::new(&app, "preview", tauri::WebviewUrl::default())
+        .title("Fast Share preview")
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .focused(true)
+        .initialization_script(format!("window.__FS_PREVIEW__ = {payload};"));
+    if let Ok(Some(monitor)) = window.current_monitor() {
+        let scale = monitor.scale_factor();
+        let at = monitor.position();
+        let size = monitor.size();
+        builder = builder
+            .position(f64::from(at.x) / scale, f64::from(at.y) / scale)
+            .inner_size(f64::from(size.width) / scale, f64::from(size.height) / scale);
+    }
+    builder.build().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn set_dock_expanded(
+    window: &tauri::WebviewWindow,
+    state: &SharedHost,
+    expanded: Option<bool>,
+) -> Result<WindowPrefs, String> {
     let mut prefs = {
         let host = state.lock().map_err(text_err)?;
         host.window_prefs.clone()
@@ -294,9 +417,9 @@ pub(crate) fn toggle_dock_expanded(
     let Some(edge) = prefs.dock_edge else {
         return Ok(prefs);
     };
-    prefs.dock_expanded = !prefs.dock_expanded;
+    prefs.dock_expanded = expanded.unwrap_or(!prefs.dock_expanded);
     apply_dock_geometry(
-        &window,
+        window,
         edge,
         prefs.dock_expanded,
         prefs.dock_x,
@@ -1339,6 +1462,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         get_window_prefs,
         set_window_prefs,
         toggle_dock_expanded,
+        hide_to_edge,
+        open_preview,
         slide_docked,
         undock_and_drag,
         quit_app,

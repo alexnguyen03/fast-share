@@ -81,6 +81,8 @@ export const en = {
   forget: "Forget",
   clear: "Clear",
   networkInfo: "Network info",
+  alwaysOnTopOn: "Always on top: on",
+  alwaysOnTopOff: "Always on top: off",
   forgetPhone: (name: string) => `Forget ${name}? It must scan a new QR code next time.`,
   copy: "Copy",
   copied: "Copied",

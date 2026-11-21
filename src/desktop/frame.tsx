@@ -6,7 +6,7 @@ import { cn } from "../shared/lib/utils";
 import { Badge } from "../shared/ui/badge";
 import { Button } from "../shared/ui/button";
 import { Card } from "../shared/ui/card";
-import { navigateDesktop, type DesktopView } from "./nav";
+import { navigateDesktop, saveTab, type DesktopView } from "./nav";
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -78,6 +78,43 @@ export function DesktopFrame({
       unlistenPair?.();
     };
   }, []);
+
+  // App-wide keys: s settings, d devices, h tuck into the edge, t always on top,
+  // i / c open the history tabs from another screen (the history screen handles them itself).
+  React.useEffect(() => {
+    function onKey(event: KeyboardEvent): void {
+      const target = event.target;
+      if (
+        event.defaultPrevented ||
+        event.repeat ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        (target instanceof HTMLElement &&
+          target.closest("input,textarea,[role=dialog],[role=alertdialog],[role=menu],[role=listbox]"))
+      ) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === "s") {
+        navigateDesktop("settings");
+      } else if (key === "d") {
+        navigateDesktop("devices");
+      } else if (key === "h") {
+        void api.hideToEdge().then(setPrefs);
+      } else if (key === "t") {
+        void api.setWindowPrefs({ alwaysOnTop: !prefs.alwaysOnTop }).then((next) => {
+          setPrefs(next);
+          showToast(next.alwaysOnTop ? en.alwaysOnTopOn : en.alwaysOnTopOff);
+        });
+      } else if ((key === "i" || key === "c") && active !== "history") {
+        saveTab(key === "i" ? "images" : "clipboard");
+        navigateDesktop("history");
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, prefs.alwaysOnTop]);
 
   const edge = prefs.dockEdge;
   const isCollapsed = edge !== null && !prefs.dockExpanded;

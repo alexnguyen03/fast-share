@@ -278,6 +278,40 @@ export const api = {
     return invoke("quit_app");
   },
 
+  hideToEdge(): Promise<WindowPrefs> {
+    if (!inTauri()) {
+      preview.windowPrefs.dockEdge = preview.windowPrefs.dockEdge ?? "right";
+      preview.windowPrefs.dockExpanded = false;
+      return Promise.resolve({ ...preview.windowPrefs });
+    }
+    return invoke<WindowPrefs>("hide_to_edge");
+  },
+
+  /** Full-screen preview window that steps through `ids`, starting at `index`. */
+  openPreview(ids: string[], index: number): Promise<void> {
+    if (!inTauri()) {
+      return Promise.resolve();
+    }
+    return invoke("open_preview", { ids, index });
+  },
+
+  closeThisWindow(): Promise<void> {
+    if (!inTauri()) {
+      return Promise.resolve();
+    }
+    return getCurrentWindow().close();
+  },
+
+  async onPreviewOpen(cb: (ids: string[], index: number) => void): Promise<() => void> {
+    if (!inTauri()) {
+      return () => undefined;
+    }
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<{ ids: string[]; index: number }>("preview-open", (event) => {
+      cb(event.payload.ids, event.payload.index);
+    });
+  },
+
   async onDockState(cb: (prefs: WindowPrefs) => void): Promise<() => void> {
     if (!inTauri()) {
       return () => undefined;

@@ -41,6 +41,24 @@ pub fn run() {
             )?;
             #[cfg(not(any(target_os = "ios", target_os = "android")))]
             {
+                use tauri_plugin_global_shortcut::{
+                    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
+                };
+                let summon = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space);
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(move |app, shortcut, event| {
+                            if shortcut == &summon && event.state() == ShortcutState::Pressed {
+                                commands::summon_or_hide(app);
+                            }
+                        })
+                        .build(),
+                )?;
+                // Another app may own the combination already; the app still works without it.
+                if let Err(error) = app.global_shortcut().register(summon) {
+                    eprintln!("global shortcut Ctrl+Shift+Space not registered: {error}");
+                }
+
                 let open = tauri::menu::MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
                 let exit = tauri::menu::MenuItem::with_id(app, "exit", "Exit", true, None::<&str>)?;
                 let menu = tauri::menu::Menu::with_items(app, &[&open, &exit])?;

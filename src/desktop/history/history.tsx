@@ -2,8 +2,6 @@ import * as React from "react";
 import {
   Check,
   CheckSquare,
-  ChevronLeft,
-  ChevronRight,
   ClipboardList,
   Copy,
   ExternalLink,
@@ -14,10 +12,7 @@ import {
   Link2,
   Pin,
   PinOff,
-  RotateCcw,
   Trash2,
-  ZoomIn,
-  ZoomOut,
 } from "lucide-react";
 import { api, type HistoryBatch, type HostStatus } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
@@ -62,7 +57,7 @@ import {
 import { showToast } from "../../shared/ui/toast";
 import { mountPhones } from "../devices/devices";
 import { DesktopFrame } from "../frame";
-import { setDesktopNavigator } from "../nav";
+import { loadTab, saveTab, setDesktopNavigator, type HistoryTab } from "../nav";
 import { mountSettings } from "../settings/settings";
 
 const imageCache = new Map<string, string>();
@@ -356,192 +351,6 @@ function TextPreviewDialog({
   );
 }
 
-function LightboxModal({
-  item,
-  hasPrev,
-  hasNext,
-  onClose,
-  onPrev,
-  onNext,
-  onCopy,
-  onReveal,
-  onTogglePin,
-}: {
-  item: FlatItem | null;
-  hasPrev: boolean;
-  hasNext: boolean;
-  onClose: () => void;
-  onPrev: () => void;
-  onNext: () => void;
-  onCopy: (id: string) => void;
-  onReveal: (id: string) => void;
-  onTogglePin: (id: string) => void;
-}): React.JSX.Element {
-  const [src, setSrc] = React.useState<string>("");
-  const [zoom, setZoom] = React.useState<number>(1);
-
-  React.useEffect(() => {
-    setZoom(1);
-    if (!item) {
-      setSrc("");
-      return;
-    }
-    let cancelled = false;
-    void loadPng(item.imageId).then((png) => {
-      if (!cancelled && png) {
-        setSrc(`data:image/png;base64,${png}`);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [item]);
-
-  return (
-    <Dialog
-      open={item !== null}
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
-    >
-      <DialogContent
-        onKeyDown={(event) => {
-          if (event.key === "ArrowLeft" && hasPrev) {
-            event.preventDefault();
-            onPrev();
-          } else if (event.key === "ArrowRight" && hasNext) {
-            event.preventDefault();
-            onNext();
-          }
-        }}
-      >
-        <div className="pr-8">
-          <DialogTitle>{item?.phoneName ?? en.image}</DialogTitle>
-          <DialogDescription>
-            {item ? [item.timeGroup, item.size ? formatBytes(item.size) : ""].filter(Boolean).join(" · ") : ""}
-          </DialogDescription>
-        </div>
-
-        <div className="relative flex h-[390px] w-full items-center justify-center overflow-auto rounded-xl bg-black/85">
-          {src ? (
-            <img
-              src={src}
-              alt={en.image}
-              style={{ transform: `scale(${zoom})`, transformOrigin: "center" }}
-              className="max-h-full max-w-full object-contain transition-transform duration-150"
-            />
-          ) : null}
-
-          {hasPrev ? (
-            <Button
-              type="button"
-              variant="secondary"
-              size="icon"
-              aria-label={en.previous}
-              onClick={onPrev}
-              className="absolute left-2 top-1/2 h-8 w-8 -translate-y-1/2 rounded-full opacity-85 hover:opacity-100"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-          ) : null}
-
-          {hasNext ? (
-            <Button
-              type="button"
-              variant="secondary"
-              size="icon"
-              aria-label={en.next}
-              onClick={onNext}
-              className="absolute right-2 top-1/2 h-8 w-8 -translate-y-1/2 rounded-full opacity-85 hover:opacity-100"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          ) : null}
-        </div>
-
-        {item ? (
-          <div className="flex items-center justify-between gap-1.5">
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                title={en.zoomOut}
-                onClick={() => setZoom((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
-                className="h-8 w-8"
-              >
-                <ZoomOut className="h-4 w-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                title={en.resetZoom}
-                onClick={() => setZoom(1)}
-                className="h-8 w-8"
-              >
-                <RotateCcw className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                title={en.zoomIn}
-                onClick={() => setZoom((z) => Math.min(3, Number((z + 0.25).toFixed(2))))}
-                className="h-8 w-8"
-              >
-                <ZoomIn className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                className="h-8 w-8"
-                title={item.pinned ? en.unpinImage : en.pinImage}
-                aria-label={item.pinned ? en.unpinImage : en.pinImage}
-                onClick={() => onTogglePin(item.imageId)}
-              >
-                {item.pinned ? (
-                  <PinOff className="h-4 w-4" />
-                ) : (
-                  <Pin className="h-4 w-4" />
-                )}
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon"
-                className="h-8 w-8"
-                title={en.showInExplorer}
-                aria-label={en.showInExplorer}
-                onClick={() => onReveal(item.imageId)}
-              >
-                <FolderOpen className="h-4 w-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="default"
-                size="icon"
-                className="h-8 w-8"
-                title={en.copy}
-                aria-label={en.copy}
-                onClick={() => onCopy(item.imageId)}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function HistoryTile({
   item,
   selected,
@@ -598,6 +407,7 @@ function HistoryTile({
           draggable
           aria-label={`${item.phoneName} · ${item.timeGroup}`}
           aria-pressed={selected}
+          data-image-id={item.imageId}
           title={`${item.phoneName} · ${item.timeGroup}`}
           onPointerDown={(event) => {
             if (event.button === 0 && !selectMode) {
@@ -743,23 +553,13 @@ function HistoryTile({
   );
 }
 
-type HistoryTab = "images" | "clipboard";
-const TAB_KEY = "fs.desktop.tab";
-
-function loadTab(): HistoryTab {
-  try {
-    return localStorage.getItem(TAB_KEY) === "clipboard" ? "clipboard" : "images";
-  } catch {
-    return "images";
-  }
-}
-
-function saveTab(tab: HistoryTab): void {
-  try {
-    localStorage.setItem(TAB_KEY, tab);
-  } catch {
-    // only a convenience; the next start opens on Images
-  }
+/** Focuses an item after React has rendered the tab it lives in. */
+function focusItem(selector: string): void {
+  window.requestAnimationFrame(() => {
+    const element = document.querySelector<HTMLElement>(selector);
+    element?.focus();
+    element?.scrollIntoView({ block: "nearest" });
+  });
 }
 
 function DesktopHistoryScreen({
@@ -775,7 +575,6 @@ function DesktopHistoryScreen({
   const [selectMode, setSelectMode] = React.useState<boolean>(false);
   const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
   const [copiedId, setCopiedId] = React.useState<string | null>(null);
-  const [previewId, setPreviewId] = React.useState<string | null>(null);
   const [activeImageId, setActiveImageId] = React.useState<string | null>(
     initialBatches[0]?.images[0]?.id ?? null,
   );
@@ -921,10 +720,28 @@ function DesktopHistoryScreen({
       ? activeImageId
       : (items[0]?.imageId ?? null);
 
-  const previewIndex = previewId
-    ? items.findIndex((i) => i.imageId === previewId)
-    : -1;
-  const previewItem = previewIndex >= 0 ? items[previewIndex] : null;
+  const currentTextId =
+    activeTextId && textItems.some((t) => t.id === activeTextId)
+      ? activeTextId
+      : (textItems[0]?.id ?? null);
+
+  const openPreview = React.useCallback(
+    (imageId: string) => {
+      setActiveImageId(imageId);
+      const ids = items.map((i) => i.imageId);
+      void api.openPreview(ids, Math.max(0, ids.indexOf(imageId)));
+    },
+    [items],
+  );
+
+  // Pins or deletes made in the preview window show up when this window gets focus back.
+  React.useEffect(() => {
+    const onFocus = (): void => {
+      void reload();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [reload]);
 
   const handleTogglePin = React.useCallback(
     (imageId: string) => {
@@ -950,15 +767,51 @@ function DesktopHistoryScreen({
     function onKey(event: KeyboardEvent): void {
       const target = event.target;
       if (
-        target instanceof HTMLElement &&
-        target.closest("input,textarea,[role=dialog],[role=menu]")
+        event.defaultPrevented || // a focused card already handled it
+        (target instanceof HTMLElement &&
+          target.closest("input,textarea,[role=dialog],[role=alertdialog],[role=menu]"))
       ) {
         return;
       }
-      if (tab !== "images") {
+      const key = event.key.toLowerCase();
+      const copyKey = key === "enter" || (key === "c" && (event.ctrlKey || event.metaKey));
+      if (event.altKey || ((event.ctrlKey || event.metaKey) && !copyKey)) {
         return;
       }
-      if (event.key === "Escape" && selectMode) {
+      // i / c jump to a tab and select its first item (the frame handles them on other screens).
+      if (key === "i" && !copyKey) {
+        switchTab("images");
+        setSelectMode(false);
+        setActiveImageId(items[0]?.imageId ?? null);
+        focusItem(`[data-image-id="${items[0]?.imageId}"]`);
+        return;
+      }
+      if (key === "c" && !copyKey) {
+        switchTab("clipboard");
+        setSelectMode(false);
+        setActiveTextId(textItems[0]?.id ?? null);
+        focusItem(`[data-text-id="${textItems[0]?.id}"]`);
+        return;
+      }
+      if (tab === "clipboard") {
+        if (!currentTextId) {
+          return;
+        }
+        const text = textItems.find((t) => t.id === currentTextId);
+        if (copyKey) {
+          event.preventDefault();
+          copyText(currentTextId);
+        } else if (key === " " && text) {
+          event.preventDefault();
+          setTextDialog({ item: text, mode: "preview" });
+        } else if (key === "delete") {
+          void api.deleteHistoryText(currentTextId).then(() => reload());
+        } else if (key === "p") {
+          handleTogglePinText(currentTextId);
+        }
+        return;
+      }
+      if (key === "escape" && selectMode) {
         setSelectMode(false);
         setSelectedIds([]);
         return;
@@ -966,7 +819,7 @@ function DesktopHistoryScreen({
       const targetId = selectMode
         ? (selectedIds[0] ?? null)
         : currentActiveId;
-      if (event.key === "Delete") {
+      if (key === "delete") {
         if (selectMode) {
           requestDelete(selectedIds);
         } else if (targetId) {
@@ -977,20 +830,17 @@ function DesktopHistoryScreen({
       if (!targetId) {
         return;
       }
-      if (event.key === " ") {
+      if (key === " ") {
         event.preventDefault();
-        setPreviewId(targetId);
-        return;
-      }
-      if (event.key === "c" || event.key === "C") {
+        openPreview(targetId);
+      } else if (copyKey) {
+        event.preventDefault();
         void api.copyHistoryImage(targetId).then(() => {
           markCopied(targetId);
         });
-      }
-      if (event.key === "o" || event.key === "O") {
+      } else if (key === "o") {
         void api.openHistoryImage(targetId);
-      }
-      if (event.key === "p" || event.key === "P") {
+      } else if (key === "p") {
         handleTogglePin(targetId);
       }
     }
@@ -998,12 +848,19 @@ function DesktopHistoryScreen({
     return () => window.removeEventListener("keydown", onKey);
   }, [
     tab,
+    items,
+    textItems,
     selectMode,
     selectedIds,
     currentActiveId,
+    currentTextId,
     reload,
     markCopied,
+    copyText,
+    switchTab,
+    openPreview,
     handleTogglePin,
+    handleTogglePinText,
     requestDelete,
   ]);
 
@@ -1075,7 +932,7 @@ function DesktopHistoryScreen({
             disabled={selectedIds.length === 0}
             onClick={() => {
               if (selectedIds[0]) {
-                setPreviewId(selectedIds[0]);
+                openPreview(selectedIds[0]);
               }
             }}
           >
@@ -1219,7 +1076,7 @@ function DesktopHistoryScreen({
                     <TextCard
                       key={item.id}
                       item={item}
-                      selected={item.id === activeTextId}
+                      selected={item.id === currentTextId}
                       justCopied={copiedId === item.id}
                       onCopy={() => copyText(item.id)}
                       onPreview={() => setTextDialog({ item, mode: "preview" })}
@@ -1272,8 +1129,7 @@ function DesktopHistoryScreen({
                           }
                         }}
                         onPreview={() => {
-                          setActiveImageId(item.imageId);
-                          setPreviewId(item.imageId);
+                          openPreview(item.imageId);
                         }}
                         onOpen={() => {
                           void api.openHistoryImage(item.imageId);
@@ -1317,34 +1173,6 @@ function DesktopHistoryScreen({
           </div>
         )}
       </div>
-
-      <LightboxModal
-        item={previewItem}
-        hasPrev={previewIndex > 0}
-        hasNext={previewIndex >= 0 && previewIndex < items.length - 1}
-        onClose={() => setPreviewId(null)}
-        onPrev={() => {
-          if (previewIndex > 0) {
-            setPreviewId(items[previewIndex - 1].imageId);
-          }
-        }}
-        onNext={() => {
-          if (previewIndex >= 0 && previewIndex < items.length - 1) {
-            setPreviewId(items[previewIndex + 1].imageId);
-          }
-        }}
-        onCopy={(id) => {
-          void api.copyHistoryImage(id).then(() => {
-            markCopied(id);
-          });
-        }}
-        onReveal={(id) => {
-          void api.revealHistoryImage(id);
-        }}
-        onTogglePin={(id) => {
-          handleTogglePin(id);
-        }}
-      />
 
       <TextPreviewDialog
         item={textDialog?.item ?? null}
