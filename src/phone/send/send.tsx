@@ -171,6 +171,7 @@ function PhoneSendScreen({
   const [clipSending, setClipSending] = React.useState<boolean>(false);
   const [clipError, setClipError] = React.useState<string>("");
   const clipBatchRef = React.useRef<string | null>(null);
+  const clipInputRef = React.useRef<HTMLTextAreaElement>(null);
 
   const openClipboard = React.useCallback(async () => {
     clipboardRequested = false;
@@ -355,17 +356,37 @@ function PhoneSendScreen({
               </Button>
             ) : (
               <Card className="flex flex-col gap-2.5 rounded-2xl border-0 bg-muted p-3 shadow-none">
-                <textarea
-                  value={clip}
-                  rows={5}
-                  placeholder={en.clipboardPlaceholder}
-                  aria-label={en.sendClipboard}
-                  onChange={(event) => {
-                    clipBatchRef.current = null; // edited text is a new message
-                    setClip(event.target.value);
-                  }}
-                  className="w-full resize-none rounded-xl border-0 bg-background p-2.5 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                />
+                <div className="relative">
+                  <textarea
+                    ref={clipInputRef}
+                    value={clip}
+                    rows={5}
+                    placeholder={en.clipboardPlaceholder}
+                    aria-label={en.sendClipboard}
+                    onChange={(event) => {
+                      clipBatchRef.current = null; // edited text is a new message
+                      setClip(event.target.value);
+                    }}
+                    className="block w-full resize-none rounded-xl border-0 bg-background p-2.5 pb-9 text-sm text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                  />
+                  {clip.length > 0 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      className="absolute right-1.5 bottom-1.5 text-muted-foreground"
+                      disabled={clipSending}
+                      onClick={() => {
+                        clipBatchRef.current = null;
+                        setClip("");
+                        setClipError("");
+                        clipInputRef.current?.focus();
+                      }}
+                    >
+                      {en.clear}
+                    </Button>
+                  ) : null}
+                </div>
                 {clipError ? (
                   <p className="m-0 text-xs text-destructive">{clipError}</p>
                 ) : null}

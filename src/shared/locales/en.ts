@@ -79,6 +79,7 @@ export const en = {
   reject: "Reject",
   acceptPhone: (name: string) => `Accept ${name}?`,
   forget: "Forget",
+  clear: "Clear",
   forgetPhone: (name: string) => `Forget ${name}? It must scan a new QR code next time.`,
   copy: "Copy",
   copied: "Copied",

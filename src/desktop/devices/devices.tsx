@@ -179,7 +179,7 @@ function DesktopDevicesScreen({
             trustedPhones.map((phone) => (
               <div
                 key={phone.id}
-                className="flex min-h-10 items-center gap-2.5 py-1"
+                className="group flex min-h-10 items-center gap-2.5 py-1"
               >
                 <DeviceAvatar name={phone.name} />
                 <span className="min-w-0 flex-1 truncate text-base font-medium text-foreground">
@@ -190,7 +190,11 @@ function DesktopDevicesScreen({
                 </span>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button variant="outline" size="xs">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="text-destructive opacity-0 hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                    >
                       {en.forget}
                     </Button>
                   </AlertDialogTrigger>

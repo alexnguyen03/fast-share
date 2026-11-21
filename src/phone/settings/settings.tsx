@@ -103,10 +103,6 @@ export function PhoneSettingsScreen({
           {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </Button>
       </header>
-      {/* Always in view, so the installed build can be told apart without scrolling. */}
-      <p className="-mt-1.5 text-center text-xs text-muted-foreground">
-        {`${en.appVersionValue} · ${buildLabel()}`}
-      </p>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pt-1">
         <div className="flex flex-col gap-1.5">

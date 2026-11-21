@@ -283,3 +283,26 @@
     touch-action: none;
   }
 }
+
+/* Unlayered on purpose: these must beat the Tailwind utilities (text-sm, border-0) on the fields. */
+/* iOS zooms into any field under 16px when it gets focus. */
+html.phone input,
+html.phone textarea {
+  font-size: 16px;
+}
+
+/* A soft outline so a field does not melt into the background; the focus ring replaces it. */
+html.phone input:not([type="file"]):not([type="checkbox"]):not(:focus),
+html.phone textarea:not(:focus) {
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+/* Desktop scrollbars: thin, and only visible while the pointer is over the list. */
+html.desktop * {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+html.desktop *:hover {
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent) transparent;
+}
