@@ -15,7 +15,8 @@ pub use ingest_batch::ingest_batch;
 pub use ingest_batch::{authorize_batch, commit_validated_batch, decode_batch_images};
 pub use ingest_text::ingest_text;
 pub use purge_history::{
-    delete_all, delete_image, delete_text, purge_expired, toggle_pin, toggle_pin_text,
+    delete_all, delete_image, delete_text, purge_expired, set_text_sensitive, toggle_pin,
+    toggle_pin_text,
 };
 pub use update_settings::update_settings;
 

@@ -1,4 +1,5 @@
 import { notificationFeedback } from "@tauri-apps/plugin-haptics";
+import { errorText, note } from "./log";
 
 const KEY = "fs.vibrate";
 
@@ -32,5 +33,8 @@ export function buzzIfEnabled(): void {
     }
     return;
   }
-  void notificationFeedback("success").catch(() => {});
+  // The capability must allow this command by name: the plugin has no default permission set.
+  void notificationFeedback("success").catch((error: unknown) => {
+    note(`haptics: ${errorText(error)}`);
+  });
 }

@@ -19,6 +19,9 @@ pub struct TextRecord {
     /// "Save forever": survives retention purge and Delete all. Absent in older history.
     #[serde(default)]
     pub pinned: bool,
+    /// The user's choice to mask the middle; `None` lets the app guess from the text.
+    #[serde(default)]
+    pub sensitive: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

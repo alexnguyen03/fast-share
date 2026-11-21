@@ -81,6 +81,8 @@ export const en = {
   forget: "Forget",
   clear: "Clear",
   networkInfo: "Network info",
+  maskSensitive: "Mask as sensitive",
+  showInFull: "Show in full",
   showWifiName: "Show Wi-Fi name",
   pairHelpTitle: "How to pair",
   sameWifiHint: "Phone and computer on the same Wi-Fi is the easy way.",

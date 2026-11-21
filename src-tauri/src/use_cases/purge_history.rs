@@ -137,3 +137,18 @@ pub fn toggle_pin_text(store: &mut impl Store, text_id: &TextId) -> Result<bool,
     store.save_batches(batches)?;
     Ok(pinned)
 }
+
+pub fn set_text_sensitive(
+    store: &mut impl Store,
+    text_id: &TextId,
+    sensitive: Option<bool>,
+) -> Result<(), HostError> {
+    let mut batches = store.list_batches()?;
+    let text = batches
+        .iter_mut()
+        .flat_map(|batch| batch.texts.iter_mut())
+        .find(|text| &text.id == text_id)
+        .ok_or(HostError::NotFound)?;
+    text.sensitive = sensitive;
+    store.save_batches(batches)
+}

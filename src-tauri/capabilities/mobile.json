@@ -8,6 +8,6 @@
     "barcode-scanner:allow-cancel",
     "barcode-scanner:allow-check-permissions",
     "barcode-scanner:allow-request-permissions",
-    "haptics:default"
+    "haptics:allow-notification-feedback"
   ]
 }

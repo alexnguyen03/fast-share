@@ -88,6 +88,7 @@ pub(crate) struct TextView {
     /// First characters only; the full text comes from `get_history_text`.
     preview: String,
     pinned: bool,
+    sensitive: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -830,6 +831,7 @@ pub(crate) fn list_history(state: tauri::State<'_, SharedHost>) -> Result<Vec<Ba
                 id: text.id.as_str().to_string(),
                 preview: text.text.chars().take(TEXT_PREVIEW_CHARS).collect(),
                 pinned: text.pinned,
+                sensitive: text.sensitive,
             })
             .collect();
         views.push(BatchView {
@@ -882,6 +884,17 @@ pub(crate) fn toggle_pin_text(
     let mut host = state.lock().map_err(text_err)?;
     let id = TextId::parse(text_id).map_err(text_err)?;
     crate::use_cases::toggle_pin_text(&mut host.store, &id).map_err(text_err)
+}
+
+#[tauri::command]
+pub(crate) fn set_text_sensitive(
+    state: tauri::State<'_, SharedHost>,
+    text_id: String,
+    sensitive: Option<bool>,
+) -> Result<(), String> {
+    let mut host = state.lock().map_err(text_err)?;
+    let id = TextId::parse(text_id).map_err(text_err)?;
+    crate::use_cases::set_text_sensitive(&mut host.store, &id, sensitive).map_err(text_err)
 }
 
 #[tauri::command]
@@ -1497,6 +1510,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         copy_history_text,
         get_history_text,
         toggle_pin_text,
+        set_text_sensitive,
         delete_history_text,
         open_history_image,
         reveal_history_image,

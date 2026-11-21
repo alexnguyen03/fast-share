@@ -50,6 +50,8 @@ export type HistoryText = {
   /** First characters only; copying uses the full text on the computer. */
   preview: string;
   pinned?: boolean;
+  /** The user's choice to mask it; null/absent lets the app guess from the text. */
+  sensitive?: boolean | null;
 };
 
 export type HistoryBatch = {
@@ -532,6 +534,17 @@ export const api = {
       return Promise.resolve(nextPinned);
     }
     return invoke<boolean>("toggle_pin_text", { textId });
+  },
+
+  setTextSensitive(textId: string, sensitive: boolean | null): Promise<void> {
+    if (!inTauri()) {
+      preview.history = preview.history.map((batch) => ({
+        ...batch,
+        texts: batch.texts.map((text) => (text.id === textId ? { ...text, sensitive } : text)),
+      }));
+      return Promise.resolve();
+    }
+    return invoke("set_text_sensitive", { textId, sensitive });
   },
 
   deleteHistoryText(textId: string): Promise<void> {

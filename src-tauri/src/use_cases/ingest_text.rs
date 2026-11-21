@@ -31,6 +31,7 @@ pub fn ingest_text(
             id: TextId::generate(),
             text: text.to_string(),
             pinned: false,
+            sensitive: None,
         }],
     })?;
     // Inserted first: a clipboard failure must never lose the text.

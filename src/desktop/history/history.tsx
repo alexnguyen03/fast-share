@@ -6,6 +6,7 @@ import {
   Copy,
   ExternalLink,
   Eye,
+  EyeOff,
   FolderOpen,
   Image as ImageIcon,
   Info,
@@ -18,6 +19,7 @@ import { api, type HistoryBatch, type HostStatus } from "../../shared/commands";
 import { en } from "../../shared/locales/en";
 import { FirewallWarning } from "../../shared/firewall-warning";
 import { cn } from "../../shared/lib/utils";
+import { looksSensitive, mask } from "../../shared/sensitive";
 import { applyTheme } from "../../shared/settings";
 import {
   AlertDialog,
@@ -172,6 +174,7 @@ type TextItem = {
   id: string;
   preview: string;
   pinned?: boolean;
+  sensitive?: boolean | null;
   phoneName: string;
   receivedAt: string;
 };
@@ -195,6 +198,7 @@ function TextCard({
   onPreview,
   onDetails,
   onTogglePin,
+  onToggleSensitive,
   onDelete,
 }: {
   item: TextItem;
@@ -204,8 +208,10 @@ function TextCard({
   onPreview: () => void;
   onDetails: () => void;
   onTogglePin: () => void;
+  onToggleSensitive: (masked: boolean) => void;
   onDelete: () => void;
 }): React.JSX.Element {
+  const masked = item.sensitive ?? looksSensitive(item.preview);
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -230,7 +236,7 @@ function TextCard({
           )}
         >
           <p className="m-0 line-clamp-4 whitespace-pre-wrap wrap-break-word text-sm text-foreground">
-            {item.preview}
+            {masked ? mask(item.preview) : item.preview}
           </p>
           {item.pinned ? (
             <Pin className="pointer-events-none absolute top-3 right-3 h-3.5 w-3.5 fill-current text-primary group-hover:hidden" />
@@ -277,6 +283,14 @@ function TextCard({
             <Pin className="h-4 w-4 opacity-75" />
           )}
           <span>{item.pinned ? en.unpinImage : en.pinImage}</span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => onToggleSensitive(!masked)}>
+          {masked ? (
+            <Eye className="h-4 w-4 opacity-75" />
+          ) : (
+            <EyeOff className="h-4 w-4 opacity-75" />
+          )}
+          <span>{masked ? en.showInFull : en.maskSensitive}</span>
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem variant="destructive" onSelect={onDelete}>
@@ -1082,6 +1096,9 @@ function DesktopHistoryScreen({
                       onPreview={() => setTextDialog({ item, mode: "preview" })}
                       onDetails={() => setTextDialog({ item, mode: "details" })}
                       onTogglePin={() => handleTogglePinText(item.id)}
+                      onToggleSensitive={(masked) => {
+                        void api.setTextSensitive(item.id, masked).then(() => reload());
+                      }}
                       onDelete={() => {
                         void api.deleteHistoryText(item.id).then(() => reload());
                       }}
