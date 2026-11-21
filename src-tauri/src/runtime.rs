@@ -129,6 +129,11 @@ pub struct KnownPc {
 }
 
 pub fn start(app: tauri::AppHandle) -> Result<(), String> {
+    // The firewall check runs `netsh` (slow); do it now in the background so the first
+    // screen that shows the warning reads the cached answer instead of waiting.
+    std::thread::spawn(|| {
+        let _ = crate::adapters::firewall_warning();
+    });
     let dir = app
         .path()
         .app_data_dir()

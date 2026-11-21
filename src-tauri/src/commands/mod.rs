@@ -155,7 +155,7 @@ pub(crate) async fn test_relay(state: tauri::State<'_, SharedHost>) -> Result<u6
 }
 
 #[tauri::command]
-pub(crate) fn get_relay(state: tauri::State<'_, SharedHost>) -> Result<RelayView, String> {
+pub(crate) async fn get_relay(state: tauri::State<'_, SharedHost>) -> Result<RelayView, String> {
     let host = state.lock().map_err(text_err)?;
     Ok(relay_view(&host))
 }
@@ -704,7 +704,7 @@ fn apply_dock_geometry(
 }
 
 #[tauri::command]
-pub(crate) fn host_status(state: tauri::State<'_, SharedHost>) -> Result<HostStatus, String> {
+pub(crate) async fn host_status(state: tauri::State<'_, SharedHost>) -> Result<HostStatus, String> {
     let mut host = state.lock().map_err(text_err)?;
     let settings = host.store.load_settings().map_err(text_err)?;
     let phones = host.store.list_phones().map_err(text_err)?;
@@ -733,7 +733,7 @@ pub(crate) fn host_status(state: tauri::State<'_, SharedHost>) -> Result<HostSta
 }
 
 #[tauri::command]
-pub(crate) fn lan_info(state: tauri::State<'_, SharedHost>) -> Result<LanInfoView, String> {
+pub(crate) async fn lan_info(state: tauri::State<'_, SharedHost>) -> Result<LanInfoView, String> {
     let snapshot = crate::adapters::lan_snapshot();
     let ip = if cfg!(any(target_os = "android", target_os = "ios")) {
         snapshot.ip
@@ -766,7 +766,7 @@ pub(crate) fn allow_firewall(state: tauri::State<'_, SharedHost>) -> Result<(), 
 }
 
 #[tauri::command]
-pub(crate) fn list_phones(state: tauri::State<'_, SharedHost>) -> Result<Vec<PhoneView>, String> {
+pub(crate) async fn list_phones(state: tauri::State<'_, SharedHost>) -> Result<Vec<PhoneView>, String> {
     let host = state.lock().map_err(text_err)?;
     let phones = host.store.list_phones().map_err(text_err)?;
     Ok(phones
@@ -809,7 +809,7 @@ pub(crate) fn forget_phone(
 }
 
 #[tauri::command]
-pub(crate) fn list_history(state: tauri::State<'_, SharedHost>) -> Result<Vec<BatchView>, String> {
+pub(crate) async fn list_history(state: tauri::State<'_, SharedHost>) -> Result<Vec<BatchView>, String> {
     let host = state.lock().map_err(text_err)?;
     let mut batches = host.store.list_batches().map_err(text_err)?;
     batches.sort_by(|left, right| right.received_at.cmp(&left.received_at));

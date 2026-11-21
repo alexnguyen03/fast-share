@@ -94,6 +94,26 @@ function DesktopDevicesScreen({
   }, []);
 
   React.useEffect(() => {
+    let cancelled = false;
+    void api
+      .discoverNearbyPcs()
+      .then((found) => {
+        if (!cancelled) {
+          setNearby(found);
+        }
+      })
+      .catch(() => {});
+    void api.getRelay().then((next) => {
+      if (!cancelled) {
+        setRelay(next);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
     let unlisten: (() => void) | null = null;
     let unlistenLan: (() => void) | null = null;
     let unlistenRelay: (() => void) | null = null;
@@ -354,11 +374,12 @@ export async function mountPhones(
   root: HTMLElement,
   onBack: () => void,
 ): Promise<void> {
-  const [phones, status, batches, nearby, lan] = await Promise.all([
+  // Nearby discovery listens on the network for most of a second, so the screen draws
+  // without it and the list fills in when the search ends (see the effect in the screen).
+  const [phones, status, batches, lan] = await Promise.all([
     api.listPhones(),
     api.hostStatus(),
     api.listHistory(),
-    api.discoverNearbyPcs().catch(() => [] as NearbyPc[]),
     api.lanInfo(),
   ]);
   const reactRoot = getOrCreateRoot(root);
@@ -367,7 +388,7 @@ export async function mountPhones(
       initialPhones={phones}
       initialStatus={status}
       initialBatches={batches}
-      initialNearby={nearby}
+      initialNearby={[]}
       initialLan={lan}
       onBack={onBack}
     />,
