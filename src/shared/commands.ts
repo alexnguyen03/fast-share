@@ -41,12 +41,15 @@ export type LanInfo = {
 export type HistoryImage = {
   id: string;
   pinned?: boolean;
+  /** File size in bytes; 0 when unknown. */
+  size?: number;
 };
 
 export type HistoryText = {
   id: string;
   /** First characters only; copying uses the full text on the computer. */
   preview: string;
+  pinned?: boolean;
 };
 
 export type HistoryBatch = {
@@ -444,6 +447,32 @@ export const api = {
       return Promise.resolve();
     }
     return invoke("copy_history_text", { textId });
+  },
+
+  getHistoryText(textId: string): Promise<string> {
+    if (!inTauri()) {
+      const text = preview.history.flatMap((batch) => batch.texts).find((t) => t.id === textId);
+      return Promise.resolve(text?.preview ?? "");
+    }
+    return invoke<string>("get_history_text", { textId });
+  },
+
+  togglePinText(textId: string): Promise<boolean> {
+    if (!inTauri()) {
+      let nextPinned = false;
+      preview.history = preview.history.map((batch) => ({
+        ...batch,
+        texts: batch.texts.map((text) => {
+          if (text.id !== textId) {
+            return text;
+          }
+          nextPinned = !text.pinned;
+          return { ...text, pinned: nextPinned };
+        }),
+      }));
+      return Promise.resolve(nextPinned);
+    }
+    return invoke<boolean>("toggle_pin_text", { textId });
   },
 
   deleteHistoryText(textId: string): Promise<void> {

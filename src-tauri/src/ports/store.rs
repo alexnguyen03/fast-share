@@ -16,6 +16,9 @@ pub struct ImageRecord {
 pub struct TextRecord {
     pub id: TextId,
     pub text: String,
+    /// "Save forever": survives retention purge and Delete all. Absent in older history.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

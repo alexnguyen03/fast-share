@@ -145,7 +145,7 @@ function DesktopSettingsScreen({
   const darkPresets = THEME_PRESETS.filter((item) => item.mode === "dark");
 
   return (
-    <DesktopFrame>
+    <DesktopFrame active="settings">
       <header className="grid min-h-9 grid-cols-[36px_1fr_36px] items-center gap-2.5">
         <Button
           variant="ghost"

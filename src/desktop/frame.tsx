@@ -1,8 +1,12 @@
 import * as React from "react";
+import { Settings as SettingsIcon, Smartphone } from "lucide-react";
 import { api, type WindowPrefs } from "../shared/commands";
 import { en } from "../shared/locales/en";
 import { cn } from "../shared/lib/utils";
+import { Badge } from "../shared/ui/badge";
+import { Button } from "../shared/ui/button";
 import { Card } from "../shared/ui/card";
+import { navigateDesktop, type DesktopView } from "./nav";
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -19,9 +23,14 @@ const UNDOCK_PULL_PX = 36;
 export function DesktopFrame({
   children,
   className,
+  active,
+  pendingCount = 0,
 }: {
   children: React.ReactNode;
   className?: string;
+  active: DesktopView;
+  /** Phones waiting to be accepted, shown as a badge on Devices. */
+  pendingCount?: number;
 }): React.JSX.Element {
   const [prefs, setPrefs] = React.useState<WindowPrefs>({
     snapToEdge: true,
@@ -96,8 +105,15 @@ export function DesktopFrame({
         isCollapsed && edge === "right" && "rounded-l-[10px]",
       );
 
+  const navItems = [
+    { view: "devices", Icon: Smartphone, label: en.devicesTitle, badge: pendingCount },
+    { view: "settings", Icon: SettingsIcon, label: en.settings, badge: 0 },
+  ] as const;
+
   return (
     <div className={containerClass}>
+      {/* `contents` while collapsed keeps the tab laid out exactly as before. */}
+      <div className={isCollapsed ? "contents" : "flex shrink-0 flex-col items-center"}>
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
@@ -246,6 +262,37 @@ export function DesktopFrame({
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
+      {isCollapsed ? null : (
+        <nav className="flex flex-col items-center gap-1 pt-2 pr-0.5">
+          {navItems.map(({ view, Icon, label, badge }) => (
+            <Button
+              key={view}
+              variant="ghost"
+              size="icon"
+              aria-label={label}
+              aria-pressed={active === view}
+              title={label}
+              className={cn(
+                "relative h-8 w-8 text-muted-foreground hover:text-foreground",
+                active === view && "bg-background text-primary hover:text-primary",
+              )}
+              // the active screen's icon goes back to the history
+              onClick={() => navigateDesktop(active === view ? "history" : view)}
+            >
+              <Icon className="h-4.5 w-4.5" />
+              {badge > 0 ? (
+                <Badge
+                  variant="destructive"
+                  className="absolute -top-0.5 -right-0.5 h-4 min-w-4 px-1 text-[10px]"
+                >
+                  {badge}
+                </Badge>
+              ) : null}
+            </Button>
+          ))}
+        </nav>
+      )}
+      </div>
 
       {isCollapsed ? null : (
         <Card

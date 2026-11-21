@@ -14,7 +14,9 @@ pub use copy_image::copy_image;
 pub use ingest_batch::ingest_batch;
 pub use ingest_batch::{authorize_batch, commit_validated_batch, decode_batch_images};
 pub use ingest_text::ingest_text;
-pub use purge_history::{delete_all, delete_image, delete_text, purge_expired, toggle_pin};
+pub use purge_history::{
+    delete_all, delete_image, delete_text, purge_expired, toggle_pin, toggle_pin_text,
+};
 pub use update_settings::update_settings;
 
 #[cfg(test)]
@@ -459,6 +461,45 @@ mod tests {
         assert_eq!(after_delete_all[0].images[0].id, first_id);
 
         assert!(!toggle_pin(&mut store, &first_id).unwrap());
+        delete_all(&mut store).unwrap();
+        assert!(store.list_batches().unwrap().is_empty());
+    }
+
+    #[test]
+    fn pinned_texts_survive_retention_purge_and_delete_all() {
+        let mut store = MemoryStore::new();
+        let device_id = trust_phone(&mut store);
+        let clipboard = RecordingClipboard::new();
+        let notifier = RecordingNotifier::new();
+        let old = now() - chrono::Duration::days(10);
+        for text in ["keep", "drop"] {
+            let id = crate::domain::BatchId::generate();
+            ingest_text(&mut store, &clipboard, &notifier, &device_id, id, text, old).unwrap();
+        }
+        let keep_id = store
+            .list_batches()
+            .unwrap()
+            .iter()
+            .flat_map(|batch| batch.texts.iter())
+            .find(|text| text.text == "keep")
+            .unwrap()
+            .id
+            .clone();
+        assert!(toggle_pin_text(&mut store, &keep_id).unwrap());
+
+        purge_expired(&mut store, now(), 7).unwrap();
+        let texts: Vec<String> = store
+            .list_batches()
+            .unwrap()
+            .iter()
+            .flat_map(|batch| batch.texts.iter().map(|text| text.text.clone()))
+            .collect();
+        assert_eq!(texts, vec!["keep".to_string()]);
+
+        delete_all(&mut store).unwrap();
+        assert_eq!(store.list_batches().unwrap().len(), 1);
+
+        assert!(!toggle_pin_text(&mut store, &keep_id).unwrap());
         delete_all(&mut store).unwrap();
         assert!(store.list_batches().unwrap().is_empty());
     }

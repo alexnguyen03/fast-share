@@ -30,6 +30,7 @@ pub fn ingest_text(
         texts: vec![TextRecord {
             id: TextId::generate(),
             text: text.to_string(),
+            pinned: false,
         }],
     })?;
     // Inserted first: a clipboard failure must never lose the text.

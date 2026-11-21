@@ -77,14 +77,17 @@ pub(crate) struct NearbyPcView {
 pub(crate) struct ImageView {
     id: String,
     pinned: bool,
+    /// File size in bytes, 0 when the file cannot be read.
+    size: u64,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TextView {
     id: String,
-    /// First characters only; the full text is copied by `copy_history_text`.
+    /// First characters only; the full text comes from `get_history_text`.
     preview: String,
+    pinned: bool,
 }
 
 #[derive(Serialize)]
@@ -676,6 +679,12 @@ pub(crate) fn list_history(state: tauri::State<'_, SharedHost>) -> Result<Vec<Ba
             .map(|image| ImageView {
                 id: image.id.as_str().to_string(),
                 pinned: image.pinned,
+                size: host
+                    .store
+                    .image_file(&image.file_name)
+                    .ok()
+                    .and_then(|path| std::fs::metadata(path).ok())
+                    .map_or(0, |meta| meta.len()),
             })
             .collect();
         let texts = batch
@@ -684,6 +693,7 @@ pub(crate) fn list_history(state: tauri::State<'_, SharedHost>) -> Result<Vec<Ba
             .map(|text| TextView {
                 id: text.id.as_str().to_string(),
                 preview: text.text.chars().take(TEXT_PREVIEW_CHARS).collect(),
+                pinned: text.pinned,
             })
             .collect();
         views.push(BatchView {
@@ -697,20 +707,45 @@ pub(crate) fn list_history(state: tauri::State<'_, SharedHost>) -> Result<Vec<Ba
     Ok(views)
 }
 
+fn full_text(store: &impl Store, text_id: String) -> Result<String, String> {
+    let id = TextId::parse(text_id).map_err(text_err)?;
+    store
+        .list_batches()
+        .map_err(text_err)?
+        .into_iter()
+        .flat_map(|batch| batch.texts.into_iter())
+        .find(|text| text.id == id)
+        .map(|text| text.text)
+        .ok_or_else(|| HostError::NotFound.to_string())
+}
+
 #[tauri::command]
 pub(crate) fn copy_history_text(
     state: tauri::State<'_, SharedHost>,
     text_id: String,
 ) -> Result<(), String> {
     let host = state.lock().map_err(text_err)?;
+    let text = full_text(&host.store, text_id)?;
+    host.clipboard.write_text(&text).map_err(text_err)
+}
+
+#[tauri::command]
+pub(crate) fn get_history_text(
+    state: tauri::State<'_, SharedHost>,
+    text_id: String,
+) -> Result<String, String> {
+    let host = state.lock().map_err(text_err)?;
+    full_text(&host.store, text_id)
+}
+
+#[tauri::command]
+pub(crate) fn toggle_pin_text(
+    state: tauri::State<'_, SharedHost>,
+    text_id: String,
+) -> Result<bool, String> {
+    let mut host = state.lock().map_err(text_err)?;
     let id = TextId::parse(text_id).map_err(text_err)?;
-    let batches = host.store.list_batches().map_err(text_err)?;
-    let text = batches
-        .iter()
-        .flat_map(|batch| batch.texts.iter())
-        .find(|text| text.id == id)
-        .ok_or_else(|| HostError::NotFound.to_string())?;
-    host.clipboard.write_text(&text.text).map_err(text_err)
+    crate::use_cases::toggle_pin_text(&mut host.store, &id).map_err(text_err)
 }
 
 #[tauri::command]
@@ -1320,6 +1355,8 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
         get_history_image,
         copy_history_image,
         copy_history_text,
+        get_history_text,
+        toggle_pin_text,
         delete_history_text,
         open_history_image,
         reveal_history_image,

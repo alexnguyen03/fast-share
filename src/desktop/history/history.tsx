@@ -4,16 +4,17 @@ import {
   CheckSquare,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Copy,
   ExternalLink,
   Eye,
   FolderOpen,
+  Image as ImageIcon,
+  Info,
   Link2,
   Pin,
   PinOff,
   RotateCcw,
-  Settings as SettingsIcon,
-  Smartphone,
   Trash2,
   ZoomIn,
   ZoomOut,
@@ -34,7 +35,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "../../shared/ui/alert-dialog";
-import { Badge } from "../../shared/ui/badge";
 import { Button } from "../../shared/ui/button";
 import { Card } from "../../shared/ui/card";
 import { Checkbox } from "../../shared/ui/checkbox";
@@ -59,9 +59,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../shared/ui/select";
-import { showToast, dismissToast } from "../../shared/ui/toast";
+import { showToast } from "../../shared/ui/toast";
 import { mountPhones } from "../devices/devices";
 import { DesktopFrame } from "../frame";
+import { setDesktopNavigator } from "../nav";
 import { mountSettings } from "../settings/settings";
 
 const imageCache = new Map<string, string>();
@@ -73,6 +74,7 @@ type FlatItem = {
   receivedAt: string;
   timeGroup: string;
   pinned: boolean;
+  size: number;
 };
 
 type TimeGroupSection = {
@@ -138,6 +140,7 @@ function flattenAndGroup(
         receivedAt: batch.receivedAt,
         timeGroup: label,
         pinned,
+        size: img.size ?? 0,
       });
     }
   }
@@ -173,52 +176,183 @@ function flattenAndGroup(
 type TextItem = {
   id: string;
   preview: string;
+  pinned?: boolean;
   phoneName: string;
   receivedAt: string;
 };
 
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(0)} KB`;
+  }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** Only the text shows; copy is the click, the rest lives in the right-click menu. */
 function TextCard({
   item,
+  selected,
   justCopied,
   onCopy,
+  onPreview,
+  onDetails,
+  onTogglePin,
   onDelete,
 }: {
   item: TextItem;
+  selected: boolean;
   justCopied: boolean;
   onCopy: () => void;
+  onPreview: () => void;
+  onDetails: () => void;
+  onTogglePin: () => void;
   onDelete: () => void;
 }): React.JSX.Element {
   return (
-    <Card className="flex flex-col gap-2 rounded-2xl border-0 bg-muted p-3">
-      <p className="m-0 line-clamp-4 whitespace-pre-wrap wrap-break-word text-sm text-foreground">
-        {item.preview}
-      </p>
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-xs text-muted-foreground">
-          {item.phoneName} · {relativeTime(item.receivedAt)}
-        </span>
-        <div className="flex shrink-0 gap-1">
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <Card
+          role="button"
+          tabIndex={0}
+          data-text-id={item.id}
+          title={en.copy}
+          onClick={onCopy}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              onCopy();
+            } else if (event.key === " ") {
+              event.preventDefault();
+              onPreview();
+            }
+          }}
+          className={cn(
+            "group relative cursor-pointer rounded-2xl border-0 bg-muted p-3 pr-9 shadow-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none",
+            selected && "ring-2 ring-primary",
+          )}
+        >
+          <p className="m-0 line-clamp-4 whitespace-pre-wrap wrap-break-word text-sm text-foreground">
+            {item.preview}
+          </p>
+          {item.pinned ? (
+            <Pin className="pointer-events-none absolute top-3 right-3 h-3.5 w-3.5 fill-current text-primary group-hover:hidden" />
+          ) : null}
           <Button
             type="button"
             variant="ghost"
-            size="sm"
-            aria-label={en.copy}
-            onClick={onCopy}
-          >
-            {justCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
+            size="icon"
             aria-label={en.delete}
-            onClick={onDelete}
+            title={en.delete}
+            className="absolute top-1.5 right-1.5 h-7 w-7 text-destructive opacity-0 hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete();
+            }}
           >
             <Trash2 className="h-4 w-4" />
           </Button>
+          {justCopied ? (
+            <div className="absolute inset-0 flex items-center justify-center gap-1.5 rounded-2xl bg-black/50 text-xs font-semibold text-white">
+              <Check className="h-4 w-4 stroke-[2.8]" />
+              {en.copied}
+            </div>
+          ) : null}
+        </Card>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={onCopy}>
+          <Copy className="h-4 w-4 opacity-75" />
+          <span>{en.copy}</span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onPreview}>
+          <Eye className="h-4 w-4 opacity-75" />
+          <span>{en.lightboxPreview}</span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onDetails}>
+          <Info className="h-4 w-4 opacity-75" />
+          <span>{en.details}</span>
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onTogglePin}>
+          {item.pinned ? (
+            <PinOff className="h-4 w-4 opacity-75" />
+          ) : (
+            <Pin className="h-4 w-4 opacity-75" />
+          )}
+          <span>{item.pinned ? en.unpinImage : en.pinImage}</span>
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" onSelect={onDelete}>
+          <Trash2 className="h-4 w-4" />
+          <span>{en.delete}</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+/** Full text in a dialog, so part of it can be selected and copied. */
+function TextPreviewDialog({
+  item,
+  mode,
+  onClose,
+}: {
+  item: TextItem | null;
+  mode: "preview" | "details";
+  onClose: () => void;
+}): React.JSX.Element {
+  const [full, setFull] = React.useState<string>("");
+
+  React.useEffect(() => {
+    setFull(item?.preview ?? "");
+    if (!item) {
+      return;
+    }
+    let cancelled = false;
+    void api.getHistoryText(item.id).then((text) => {
+      if (!cancelled) {
+        setFull(text);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [item]);
+
+  return (
+    <Dialog
+      open={item !== null}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+    >
+      <DialogContent>
+        <div className="pr-8">
+          <DialogTitle>{mode === "preview" ? en.lightboxPreview : en.details}</DialogTitle>
+          <DialogDescription>
+            {item ? `${item.phoneName} · ${relativeTime(item.receivedAt)}` : ""}
+          </DialogDescription>
         </div>
-      </div>
-    </Card>
+        {mode === "preview" ? (
+          <div className="max-h-[60vh] overflow-y-auto rounded-xl bg-muted p-3 text-sm whitespace-pre-wrap wrap-break-word text-foreground select-text">
+            {full}
+          </div>
+        ) : item ? (
+          <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+            <dt className="text-muted-foreground">{en.detailsFrom}</dt>
+            <dd className="m-0">{item.phoneName}</dd>
+            <dt className="text-muted-foreground">{en.detailsReceived}</dt>
+            <dd className="m-0">{new Date(item.receivedAt).toLocaleString()}</dd>
+            <dt className="text-muted-foreground">{en.detailsLength}</dt>
+            <dd className="m-0">{en.characters(full.length)}</dd>
+          </dl>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -285,7 +419,9 @@ function LightboxModal({
       >
         <div className="pr-8">
           <DialogTitle>{item?.phoneName ?? en.image}</DialogTitle>
-          <DialogDescription>{item?.timeGroup ?? ""}</DialogDescription>
+          <DialogDescription>
+            {item ? [item.timeGroup, item.size ? formatBytes(item.size) : ""].filter(Boolean).join(" · ") : ""}
+          </DialogDescription>
         </div>
 
         <div className="relative flex h-[390px] w-full items-center justify-center overflow-auto rounded-xl bg-black/85">
@@ -364,32 +500,39 @@ function LightboxModal({
               <Button
                 type="button"
                 variant="secondary"
-                size="sm"
+                size="icon"
+                className="h-8 w-8"
+                title={item.pinned ? en.unpinImage : en.pinImage}
+                aria-label={item.pinned ? en.unpinImage : en.pinImage}
                 onClick={() => onTogglePin(item.imageId)}
               >
                 {item.pinned ? (
-                  <PinOff className="h-3.5 w-3.5" />
+                  <PinOff className="h-4 w-4" />
                 ) : (
-                  <Pin className="h-3.5 w-3.5" />
+                  <Pin className="h-4 w-4" />
                 )}
-                <span>{item.pinned ? en.unpinImage : en.pinImage}</span>
               </Button>
               <Button
                 type="button"
                 variant="secondary"
-                size="sm"
+                size="icon"
+                className="h-8 w-8"
+                title={en.showInExplorer}
+                aria-label={en.showInExplorer}
                 onClick={() => onReveal(item.imageId)}
               >
-                <FolderOpen className="h-3.5 w-3.5" />
+                <FolderOpen className="h-4 w-4" />
               </Button>
               <Button
                 type="button"
                 variant="default"
-                size="sm"
+                size="icon"
+                className="h-8 w-8"
+                title={en.copy}
+                aria-label={en.copy}
                 onClick={() => onCopy(item.imageId)}
               >
-                <Copy className="h-3.5 w-3.5" />
-                <span>{en.copy}</span>
+                <Copy className="h-4 w-4" />
               </Button>
             </div>
           </div>
@@ -600,16 +743,31 @@ function HistoryTile({
   );
 }
 
+type HistoryTab = "images" | "clipboard";
+const TAB_KEY = "fs.desktop.tab";
+
+function loadTab(): HistoryTab {
+  try {
+    return localStorage.getItem(TAB_KEY) === "clipboard" ? "clipboard" : "images";
+  } catch {
+    return "images";
+  }
+}
+
+function saveTab(tab: HistoryTab): void {
+  try {
+    localStorage.setItem(TAB_KEY, tab);
+  } catch {
+    // only a convenience; the next start opens on Images
+  }
+}
+
 function DesktopHistoryScreen({
   initialBatches,
   initialStatus,
-  onNavigateDevices,
-  onNavigateSettings,
 }: {
   initialBatches: HistoryBatch[];
   initialStatus: HostStatus;
-  onNavigateDevices: () => void;
-  onNavigateSettings: () => void;
 }): React.JSX.Element {
   const [batches, setBatches] = React.useState<HistoryBatch[]>(initialBatches);
   const [status, setStatus] = React.useState<HostStatus>(initialStatus);
@@ -648,22 +806,31 @@ function DesktopHistoryScreen({
   }, []);
 
   const [hiddenIds, setHiddenIds] = React.useState<string[]>([]);
-  const pendingDeleteRef = React.useRef<{
-    ids: string[];
-    timer: number;
-    toastId: number;
+  // Images awaiting the delete confirmation; null when the dialog is closed.
+  const [confirmDeleteIds, setConfirmDeleteIds] = React.useState<string[] | null>(null);
+  const [tab, setTab] = React.useState<HistoryTab>(loadTab);
+  const [textDialog, setTextDialog] = React.useState<{
+    item: TextItem;
+    mode: "preview" | "details";
   } | null>(null);
-  const mountedRef = React.useRef<boolean>(true);
+  const [activeTextId, setActiveTextId] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
+  const switchTab = React.useCallback((next: HistoryTab) => {
+    setTab(next);
+    saveTab(next);
+  }, []);
+
+  const requestDelete = React.useCallback((ids: string[]) => {
+    if (ids.length > 0) {
+      setConfirmDeleteIds(ids);
+    }
   }, []);
 
   const commitDelete = React.useCallback(
     (ids: string[]) => {
+      setHiddenIds((prev) => [...prev, ...ids]);
+      setSelectedIds([]);
+      setActiveImageId((prev) => (prev && ids.includes(prev) ? null : prev));
       for (const id of ids) {
         imageCache.delete(id);
       }
@@ -672,74 +839,12 @@ function DesktopHistoryScreen({
           // The files may already be gone; reload below resyncs the list.
         })
         .then(() => {
-          if (!mountedRef.current) {
-            return;
-          }
+          showToast(ids.length > 1 ? en.imagesDeletedToast(ids.length) : en.imageDeletedToast);
           setHiddenIds((prev) => prev.filter((id) => !ids.includes(id)));
           return reload();
         });
     },
     [reload],
-  );
-
-  const clearPendingDelete = React.useCallback((): boolean => {
-    const pending = pendingDeleteRef.current;
-    if (!pending) {
-      return false;
-    }
-    window.clearTimeout(pending.timer);
-    if (pending.toastId) {
-      dismissToast(pending.toastId);
-    }
-    pendingDeleteRef.current = null;
-    return true;
-  }, []);
-
-  const flushPendingDelete = React.useCallback(() => {
-    const pending = pendingDeleteRef.current;
-    if (!pending) {
-      return;
-    }
-    clearPendingDelete();
-    commitDelete(pending.ids);
-  }, [clearPendingDelete, commitDelete]);
-
-  const requestDelete = React.useCallback(
-    (ids: string[]) => {
-      if (ids.length === 0) {
-        return;
-      }
-      flushPendingDelete();
-      setHiddenIds((prev) => [...prev, ...ids]);
-      setSelectedIds([]);
-      setActiveImageId((prev) => (prev && ids.includes(prev) ? null : prev));
-      const entry = { ids, timer: 0, toastId: 0 };
-      entry.timer = window.setTimeout(() => {
-        pendingDeleteRef.current = null;
-        dismissToast(entry.toastId);
-        commitDelete(ids);
-      }, 5000);
-      pendingDeleteRef.current = entry;
-      entry.toastId = showToast(
-        ids.length > 1
-          ? en.imagesDeletedToast(ids.length)
-          : en.imageDeletedToast,
-        "default",
-        {
-          label: en.undo,
-          onAction: () => {
-            if (pendingDeleteRef.current !== entry) {
-              return;
-            }
-            window.clearTimeout(entry.timer);
-            pendingDeleteRef.current = null;
-            setHiddenIds((prev) => prev.filter((id) => !ids.includes(id)));
-            showToast(en.deleteUndone);
-          },
-        },
-      );
-    },
-    [commitDelete, flushPendingDelete],
   );
 
   React.useEffect(() => {
@@ -760,7 +865,10 @@ function DesktopHistoryScreen({
   );
 
   const hasPinnedAny = React.useMemo(
-    () => batches.some((b) => b.images.some((img) => img.pinned)),
+    () =>
+      batches.some(
+        (b) => b.images.some((img) => img.pinned) || b.texts.some((t) => t.pinned),
+      ),
     [batches],
   );
 
@@ -778,21 +886,34 @@ function DesktopHistoryScreen({
     [batches, effectiveFilter, hiddenIds],
   );
 
-  // Texts have no pin or preview, so they sit in their own list above the image groups.
-  const textItems = React.useMemo<TextItem[]>(
-    () =>
-      effectiveFilter === "pinned"
-        ? []
-        : batches
-            .filter((b) => effectiveFilter === "all" || b.phoneName === effectiveFilter)
-            .flatMap((b) =>
-              b.texts.map((t) => ({
-                ...t,
-                phoneName: b.phoneName,
-                receivedAt: b.receivedAt,
-              })),
-            ),
-    [batches, effectiveFilter],
+  // Saved-forever texts first, like the pinned image group.
+  const textItems = React.useMemo<TextItem[]>(() => {
+    const all = batches
+      .filter(
+        (b) =>
+          effectiveFilter === "all" ||
+          effectiveFilter === "pinned" ||
+          b.phoneName === effectiveFilter,
+      )
+      .flatMap((b) =>
+        b.texts.map((t) => ({
+          ...t,
+          phoneName: b.phoneName,
+          receivedAt: b.receivedAt,
+        })),
+      )
+      .filter((t) => effectiveFilter !== "pinned" || t.pinned);
+    return [...all.filter((t) => t.pinned), ...all.filter((t) => !t.pinned)];
+  }, [batches, effectiveFilter]);
+
+  const copyText = React.useCallback(
+    (id: string) => {
+      setActiveTextId(id);
+      void api.copyHistoryText(id).then(() => {
+        markCopied(id);
+      });
+    },
+    [markCopied],
   );
 
   const currentActiveId =
@@ -815,6 +936,16 @@ function DesktopHistoryScreen({
     [reload],
   );
 
+  const handleTogglePinText = React.useCallback(
+    (textId: string) => {
+      void api.togglePinText(textId).then((pinned) => {
+        showToast(pinned ? en.pinnedToast : en.unpinnedToast);
+        return reload();
+      });
+    },
+    [reload],
+  );
+
   React.useEffect(() => {
     function onKey(event: KeyboardEvent): void {
       const target = event.target;
@@ -822,6 +953,9 @@ function DesktopHistoryScreen({
         target instanceof HTMLElement &&
         target.closest("input,textarea,[role=dialog],[role=menu]")
       ) {
+        return;
+      }
+      if (tab !== "images") {
         return;
       }
       if (event.key === "Escape" && selectMode) {
@@ -863,6 +997,7 @@ function DesktopHistoryScreen({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
+    tab,
     selectMode,
     selectedIds,
     currentActiveId,
@@ -876,7 +1011,7 @@ function DesktopHistoryScreen({
     effectiveFilter === "all" || effectiveFilter === "pinned";
 
   return (
-    <DesktopFrame>
+    <DesktopFrame active="history" pendingCount={status.pending.length}>
       <header className="flex min-h-9 items-center justify-between gap-2.5">
         <div className="w-12" />
         <Select value={effectiveFilter} onValueChange={setDeviceFilter}>
@@ -895,23 +1030,27 @@ function DesktopHistoryScreen({
             ))}
           </SelectContent>
         </Select>
-        <Button
-          variant={selectMode ? "default" : "ghost"}
-          size="sm"
-          onClick={() => {
-            setSelectMode((prev) => {
-              if (prev) {
-                setSelectedIds([]);
-              }
-              return !prev;
-            });
-          }}
-        >
-          {selectMode ? en.done : en.select}
-        </Button>
+        {tab === "images" ? (
+          <Button
+            variant={selectMode ? "default" : "ghost"}
+            size="sm"
+            onClick={() => {
+              setSelectMode((prev) => {
+                if (prev) {
+                  setSelectedIds([]);
+                }
+                return !prev;
+              });
+            }}
+          >
+            {selectMode ? en.done : en.select}
+          </Button>
+        ) : (
+          <div className="w-12" />
+        )}
       </header>
 
-      {selectMode ? (
+      {selectMode && tab === "images" ? (
         <div className="flex flex-wrap gap-1.5">
           <Button
             variant="default"
@@ -978,7 +1117,6 @@ function DesktopHistoryScreen({
                 <AlertDialogAction
                   variant="destructive"
                   onClick={() => {
-                    clearPendingDelete();
                     imageCache.clear();
                     setHiddenIds([]);
                     setSelectedIds([]);
@@ -1040,7 +1178,7 @@ function DesktopHistoryScreen({
           </div>
         ) : null}
 
-        {groups.length === 0 && textItems.length === 0 ? (
+        {batches.length === 0 ? (
           <Card className="my-auto flex flex-col items-center gap-3 rounded-2xl border-0 bg-muted px-4 py-6 text-center">
             <div className="rounded-xl bg-background p-2 ring-1 ring-border/70">
               <img
@@ -1074,26 +1212,32 @@ function DesktopHistoryScreen({
           </Card>
         ) : (
           <div className="flex flex-col gap-4">
-            {textItems.length > 0 ? (
-              <div className="flex flex-col gap-2">
-                {textItems.map((item) => (
-                  <TextCard
-                    key={item.id}
-                    item={item}
-                    justCopied={copiedId === item.id}
-                    onCopy={() => {
-                      void api.copyHistoryText(item.id).then(() => {
-                        markCopied(item.id);
-                      });
-                    }}
-                    onDelete={() => {
-                      void api.deleteHistoryText(item.id).then(() => reload());
-                    }}
-                  />
-                ))}
-              </div>
+            {tab === "clipboard" ? (
+              textItems.length > 0 ? (
+                <div className="flex flex-col gap-2">
+                  {textItems.map((item) => (
+                    <TextCard
+                      key={item.id}
+                      item={item}
+                      selected={item.id === activeTextId}
+                      justCopied={copiedId === item.id}
+                      onCopy={() => copyText(item.id)}
+                      onPreview={() => setTextDialog({ item, mode: "preview" })}
+                      onDetails={() => setTextDialog({ item, mode: "details" })}
+                      onTogglePin={() => handleTogglePinText(item.id)}
+                      onDelete={() => {
+                        void api.deleteHistoryText(item.id).then(() => reload());
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="py-10 text-center text-sm text-muted-foreground">{en.noTextsYet}</p>
+              )
+            ) : groups.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">{en.emptyImagesTab}</p>
             ) : null}
-            {groups.map((group) => (
+            {tab === "images" && groups.map((group) => (
               <div key={group.label} className="flex flex-col gap-2">
                 <div className="flex items-center justify-center">
                   <span className="rounded-full bg-secondary px-3 py-0.5 text-xs font-medium text-muted-foreground">
@@ -1202,34 +1346,70 @@ function DesktopHistoryScreen({
         }}
       />
 
-      <footer className="mt-auto flex items-center justify-center gap-12 pt-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={en.devicesTitle}
-          title={en.devicesTitle}
-          className="relative"
-          onClick={onNavigateDevices}
-        >
-          <Smartphone className="h-6 w-6" />
-          {status.pending.length > 0 ? (
-            <Badge
+      <TextPreviewDialog
+        item={textDialog?.item ?? null}
+        mode={textDialog?.mode ?? "preview"}
+        onClose={() => setTextDialog(null)}
+      />
+
+      <AlertDialog
+        open={confirmDeleteIds !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setConfirmDeleteIds(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {en.deleteImageTitle(confirmDeleteIds?.length ?? 1)}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{en.deleteHistoryImageConfirm}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{en.cancel}</AlertDialogCancel>
+            <AlertDialogAction
               variant="destructive"
-              className="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 text-xs"
+              onClick={() => {
+                if (confirmDeleteIds) {
+                  commitDelete(confirmDeleteIds);
+                }
+                setConfirmDeleteIds(null);
+              }}
             >
-              {status.pending.length}
-            </Badge>
-          ) : null}
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={en.settings}
-          title={en.settings}
-          onClick={onNavigateSettings}
-        >
-          <SettingsIcon className="h-6 w-6" />
-        </Button>
+              {en.delete}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <footer className="mt-auto grid grid-cols-2 gap-1 rounded-xl bg-muted p-1">
+        {(
+          [
+            ["images", ImageIcon, en.tabImages],
+            ["clipboard", ClipboardList, en.tabClipboard],
+          ] as const
+        ).map(([value, Icon, label]) => (
+          <Button
+            key={value}
+            variant="ghost"
+            size="sm"
+            aria-pressed={tab === value}
+            className={cn(
+              "gap-1.5 text-muted-foreground",
+              tab === value && "bg-background text-foreground shadow-sm hover:bg-background",
+            )}
+            onClick={() => {
+              setSelectMode(false);
+              setSelectedIds([]);
+              switchTab(value);
+            }}
+          >
+            <Icon className="h-4 w-4" />
+            {label}
+          </Button>
+        ))}
       </footer>
     </DesktopFrame>
   );
@@ -1242,21 +1422,20 @@ export async function mountDesktop(root: HTMLElement): Promise<void> {
     api.getSettings(),
   ]);
   applyTheme(settings.theme);
+  setDesktopNavigator((view) => {
+    const back = (): void => {
+      void mountDesktop(root);
+    };
+    if (view === "devices") {
+      void mountPhones(root, back);
+    } else if (view === "settings") {
+      void mountSettings(root, back);
+    } else {
+      back();
+    }
+  });
   const reactRoot = getOrCreateRoot(root);
   reactRoot.render(
-    <DesktopHistoryScreen
-      initialBatches={batches}
-      initialStatus={status}
-      onNavigateDevices={() => {
-        void mountPhones(root, () => {
-          void mountDesktop(root);
-        });
-      }}
-      onNavigateSettings={() => {
-        void mountSettings(root, () => {
-          void mountDesktop(root);
-        });
-      }}
-    />,
+    <DesktopHistoryScreen initialBatches={batches} initialStatus={status} />,
   );
 }

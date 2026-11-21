@@ -23,9 +23,9 @@ pub fn purge_expired(
                     removed += 1;
                 }
             }
-            if !pinned_images.is_empty() {
+            batch.texts.retain(|text| text.pinned);
+            if !pinned_images.is_empty() || !batch.texts.is_empty() {
                 batch.images = pinned_images;
-                batch.texts.clear();
                 kept.push(batch);
             }
             continue;
@@ -115,11 +115,25 @@ pub fn delete_all(store: &mut impl Store) -> Result<(), HostError> {
                 store.remove_image_file(&image.file_name)?;
             }
         }
-        if !pinned.is_empty() {
+        batch.texts.retain(|text| text.pinned);
+        if !pinned.is_empty() || !batch.texts.is_empty() {
             batch.images = pinned;
             kept.push(batch);
         }
     }
     store.save_batches(kept)?;
     Ok(())
+}
+
+pub fn toggle_pin_text(store: &mut impl Store, text_id: &TextId) -> Result<bool, HostError> {
+    let mut batches = store.list_batches()?;
+    let text = batches
+        .iter_mut()
+        .flat_map(|batch| batch.texts.iter_mut())
+        .find(|text| &text.id == text_id)
+        .ok_or(HostError::NotFound)?;
+    text.pinned = !text.pinned;
+    let pinned = text.pinned;
+    store.save_batches(batches)?;
+    Ok(pinned)
 }

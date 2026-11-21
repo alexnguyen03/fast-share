@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronLeft, Laptop, RefreshCw, Smartphone } from "lucide-react";
+import { ChevronLeft, Info, Laptop, RefreshCw, Smartphone } from "lucide-react";
 import {
   api,
   type HistoryBatch,
@@ -74,6 +74,7 @@ function DesktopDevicesScreen({
   const [lanInfo, setLanInfo] = React.useState<LanInfo>(initialLan);
   const [showQr, setShowQr] = React.useState<boolean>(false);
   const [relay, setRelay] = React.useState<RelayView | null>(null);
+  const [showLan, setShowLan] = React.useState<boolean>(false);
 
   const refresh = React.useCallback(async () => {
     void api.getRelay().then(setRelay);
@@ -129,8 +130,8 @@ function DesktopDevicesScreen({
   const lanOthers = nearby.filter((item) => item.name !== status.pcName);
 
   return (
-    <DesktopFrame>
-      <header className="grid min-h-9 grid-cols-[36px_1fr_36px] items-center gap-2.5">
+    <DesktopFrame active="devices">
+      <header className="grid min-h-9 grid-cols-[72px_1fr_72px] items-center gap-2.5">
         <Button
           variant="ghost"
           size="icon"
@@ -142,21 +143,34 @@ function DesktopDevicesScreen({
         <h1 className="m-0 text-center text-lg font-semibold text-foreground">
           {en.devicesTitle}
         </h1>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={en.refreshNearby}
-          title={en.refreshNearby}
-          onClick={() => {
-            void refresh();
-          }}
-        >
-          <RefreshCw className="h-4 w-4" />
-        </Button>
+        <div className="flex justify-end">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={en.networkInfo}
+            title={en.networkInfo}
+            aria-pressed={showLan}
+            className={showLan ? "text-primary" : undefined}
+            onClick={() => setShowLan((open) => !open)}
+          >
+            <Info className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={en.refreshNearby}
+            title={en.refreshNearby}
+            onClick={() => {
+              void refresh();
+            }}
+          >
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pt-1">
-        <LanStatusCard info={lanInfo} />
+        {showLan ? <LanStatusCard info={lanInfo} /> : null}
         {status.firewallWarning ? (
           <FirewallWarning
             onAllow={() => {
