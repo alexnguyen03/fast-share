@@ -77,33 +77,35 @@ export function PhoneSettingsScreen({
   const darkPresets = THEME_PRESETS.filter((item) => item.mode === "dark");
 
   return (
-    <PhoneFrame activeTab="settings" onSelectTab={onSelectTab}>
-      <header className="grid min-h-9 grid-cols-[36px_1fr_36px] items-center gap-2.5">
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={en.back}
-          onClick={() => onSelectTab("send")}
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </Button>
-        <h1 className="m-0 text-center text-lg font-semibold text-foreground">
-          {en.settings}
-        </h1>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={en.appearance}
-          title={isDark ? en.lightThemes : en.darkThemes}
-          onClick={() => {
-            const target = isDark ? lightPresets[0].id : darkPresets[0].id;
-            selectTheme(target);
-          }}
-        >
-          {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-        </Button>
-      </header>
-
+    <PhoneFrame activeTab="settings" onSelectTab={onSelectTab}
+      header={
+        <header className="grid min-h-9 grid-cols-[36px_1fr_36px] items-center gap-2.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={en.back}
+            onClick={() => onSelectTab("send")}
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+          <h1 className="m-0 text-center text-lg font-semibold text-foreground">
+            {en.settings}
+          </h1>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={en.appearance}
+            title={isDark ? en.lightThemes : en.darkThemes}
+            onClick={() => {
+              const target = isDark ? lightPresets[0].id : darkPresets[0].id;
+              selectTheme(target);
+            }}
+          >
+            {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </Button>
+        </header>
+      }
+    >
       {/* px-1 with -mx-1: room for the field outlines, which the scroll edge would clip */}
       <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1 pt-1 pb-1">
         <SettingsGroup label={<Label htmlFor="phoneName">{en.phoneName}</Label>}>

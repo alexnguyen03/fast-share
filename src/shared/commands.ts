@@ -297,6 +297,14 @@ export const api = {
     return invoke("open_preview", { ids, index });
   },
 
+  /** iOS clipboard text read natively (no WebKit "Paste" bubble); null where that is not available. */
+  async readPhoneClipboard(): Promise<string | null> {
+    if (!inTauri()) {
+      return null;
+    }
+    return (await invoke<string | null>("read_phone_clipboard").catch(() => null)) ?? null;
+  },
+
   /** The phone's Wi-Fi name, or "" when unknown (no location permission, not on Wi-Fi). */
   async wifiName(): Promise<string> {
     const bridge = window.__FAST_SHARE_ANDROID__;

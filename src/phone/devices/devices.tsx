@@ -370,22 +370,24 @@ export function PhoneDevicesScreen({
   }
 
   return (
-    <PhoneFrame activeTab="devices" onSelectTab={onSelectTab}>
-      <header className="grid min-h-9 grid-cols-[36px_1fr_36px] items-center gap-2.5">
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={en.back}
-          onClick={() => onSelectTab("send")}
-        >
-          <ChevronLeft className="h-5 w-5" />
-        </Button>
-        <h1 className="m-0 text-center text-lg font-semibold text-foreground">
-          {en.devicesTitle}
-        </h1>
-        <span aria-hidden="true" />
-      </header>
-
+    <PhoneFrame activeTab="devices" onSelectTab={onSelectTab}
+      header={
+        <header className="grid min-h-9 grid-cols-[36px_1fr_36px] items-center gap-2.5">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={en.back}
+            onClick={() => onSelectTab("send")}
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </Button>
+          <h1 className="m-0 text-center text-lg font-semibold text-foreground">
+            {en.devicesTitle}
+          </h1>
+          <span aria-hidden="true" />
+        </header>
+      }
+    >
       <PullToRefresh
         onRefresh={refreshNearby}
         className="-mx-1 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-1 pt-1 pb-1"

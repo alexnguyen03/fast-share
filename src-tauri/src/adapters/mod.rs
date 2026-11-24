@@ -9,6 +9,7 @@ mod os_clipboard;
 mod os_drag;
 mod os_notifier;
 pub mod phone_client;
+pub mod phone_clipboard;
 pub mod shared_images;
 pub mod wifi;
 

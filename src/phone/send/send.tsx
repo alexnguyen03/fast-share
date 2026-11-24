@@ -78,6 +78,11 @@ async function readClipboard(): Promise<string> {
     if (bridge) {
       return bridge.readClipboardText();
     }
+    // iOS: straight from UIPasteboard, so the text lands in the field without WebKit's Paste bubble
+    const native = await api.readPhoneClipboard();
+    if (native !== null) {
+      return native;
+    }
     return await navigator.clipboard.readText();
   } catch {
     return ""; // denied or unsupported: the preview opens empty so the user can paste by hand
@@ -237,13 +242,15 @@ function PhoneSendScreen({
   };
 
   return (
-    <PhoneFrame activeTab="send" onSelectTab={onSelectTab}>
-      <header className="flex min-h-9 items-center gap-2.5">
-        <h1 className="m-0 text-lg font-semibold text-foreground">
-          {en.appName}
-        </h1>
-      </header>
-
+    <PhoneFrame activeTab="send" onSelectTab={onSelectTab}
+      header={
+        <header className="flex min-h-9 items-center gap-2.5">
+          <h1 className="m-0 text-lg font-semibold text-foreground">
+            {en.appName}
+          </h1>
+        </header>
+      }
+    >
       <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1 pt-1 pb-1">
         {pending && pending.length > 0 ? (
           <Card className="flex items-center gap-2.5 rounded-2xl border-0 bg-accent px-3 py-2.5">

@@ -326,3 +326,39 @@ html.desktop *:hover {
     transform: translateX(-100%);
   }
 }
+
+/* Native feel: labels, buttons and lists do not select or show the copy callout on a long press.
+   Fields stay editable, and anything marked select-text (e.g. the text preview) stays selectable. */
+html {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.select-text,
+.select-text * {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* On the phone the toast floats above the tab bar instead of covering it. */
+html.phone .toaster {
+  bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+}
+
+@keyframes fs-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fs-zoom-in {
+  from {
+    transform: scale(0);
+    opacity: 0;
+  }
+}

@@ -47,6 +47,25 @@ pub fn run() {
                 app.handle().plugin(tauri_plugin_barcode_scanner::init())?;
                 app.handle().plugin(tauri_plugin_haptics::init())?;
             }
+            // iOS: the web view's scroll view insets the page by the safe areas, so the page ends
+            // above the home indicator and the strip below shows the web view's white backing.
+            // Let the page fill the screen; the CSS pads with env(safe-area-inset-*) itself.
+            #[cfg(target_os = "ios")]
+            if let Some(window) = tauri::Manager::get_webview_window(app, "main") {
+                let _ = window.with_webview(|webview| {
+                    use objc2::msg_send;
+                    use objc2::runtime::AnyObject;
+                    const NEVER: isize = 2; // UIScrollViewContentInsetAdjustmentBehavior.never
+                    // SAFETY: inner() is the live WKWebView; scrollView is never nil on it.
+                    unsafe {
+                        let web_view = &*(webview.inner() as *const AnyObject);
+                        let scroll: *mut AnyObject = msg_send![web_view, scrollView];
+                        if let Some(scroll) = scroll.as_ref() {
+                            let _: () = msg_send![scroll, setContentInsetAdjustmentBehavior: NEVER];
+                        }
+                    }
+                });
+            }
             runtime::start(app.handle().clone()).map_err(
                 |error| -> Box<dyn std::error::Error> { std::io::Error::other(error).into() },
             )?;

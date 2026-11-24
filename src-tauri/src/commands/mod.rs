@@ -196,6 +196,13 @@ pub(crate) fn set_relay(
     Ok(relay_view(&host))
 }
 
+/// Clipboard text on iOS, read natively so no WebKit "Paste" bubble appears; None elsewhere.
+/// Synchronous on purpose: UIKit wants the main thread, where sync commands run.
+#[tauri::command]
+pub(crate) fn read_phone_clipboard() -> Option<String> {
+    crate::adapters::phone_clipboard::read_text()
+}
+
 /// The Wi-Fi network name on iOS; `None` elsewhere or without permission (Android asks Kotlin).
 #[tauri::command]
 pub(crate) fn wifi_name() -> Option<String> {
@@ -1490,6 +1497,7 @@ pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Sen
     tauri::generate_handler![
         surface,
         wifi_name,
+        read_phone_clipboard,
         request_wifi_permission,
         start_drag,
         get_window_prefs,

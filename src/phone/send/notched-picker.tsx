@@ -3,7 +3,7 @@ import { ArrowUpFromLine, ClipboardPaste } from "lucide-react";
 import { en } from "../../shared/locales/en";
 
 const CORNER = 16; // the card's rounded corners
-const BEND = 34; // radius of the three arcs that cut the notch; the notch is 3 * BEND square
+const BEND = 60; // radius of the three arcs that cut the notch; the notch is 3 * BEND square
 const GAP = 6; // space between the paste button and the notch edge
 const BUTTON = 2 * (BEND - GAP);
 
@@ -68,8 +68,12 @@ export function NotchedPicker({
           }
         }}
         // until measured, a plain rounded card; then the notched outline
-        style={size ? { clipPath: `path("${notchPath(size.w, size.h)}")` } : undefined}
-        className="absolute inset-0 flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl bg-accent px-5 pb-8 text-center transition-transform outline-none active:scale-[0.99] focus-visible:bg-secondary"
+        style={{
+          // lift the label clear of the notch
+          paddingBottom: BEND,
+          clipPath: size ? `path("${notchPath(size.w, size.h)}")` : undefined,
+        }}
+        className="absolute inset-0 flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl bg-accent px-5 text-center transition-transform outline-none active:scale-[0.99] focus-visible:bg-secondary"
       >
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground">
           <ArrowUpFromLine className="h-6 w-6" />
@@ -87,7 +91,7 @@ export function NotchedPicker({
         style={{ width: BUTTON, height: BUTTON, right: GAP, bottom: GAP }}
         className="absolute flex items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-transform outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 active:scale-95"
       >
-        <ClipboardPaste className="h-6 w-6" />
+        <ClipboardPaste className="h-10 w-10" />
       </button>
     </div>
   );

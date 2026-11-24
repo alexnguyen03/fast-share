@@ -20,14 +20,19 @@ let enterFrom: -1 | 0 | 1 = 0;
 export function PhoneFrame({
   activeTab,
   onSelectTab,
+  header,
   children,
 }: {
   activeTab: PhoneTab;
   onSelectTab: (tab: PhoneTab) => void;
+  /** Stays put while the body slides; its content fades between tabs. */
+  header?: React.ReactNode;
   children: React.ReactNode;
 }): React.JSX.Element {
   const dragRef = React.useRef<{ x: number; y: number; t: number; axis: "x" | "y" | null } | null>(null);
   const [offset, setOffset] = React.useState<number>(0);
+  // how far the body has slid, 0..1, so the header text can fade out with it
+  const [progress, setProgress] = React.useState<number>(0);
   const [settling, setSettling] = React.useState<boolean>(false);
   const [entering] = React.useState<-1 | 0 | 1>(() => {
     const from = enterFrom;
@@ -39,6 +44,17 @@ export function PhoneFrame({
 
   return (
     <section className="panel phone flex h-dvh w-full max-w-[440px] flex-col gap-3 overflow-hidden bg-background px-4 text-foreground">
+      {header ? (
+        <div
+          className="shrink-0 animate-[fs-fade-in_220ms_ease-out]"
+          style={{
+            opacity: 1 - Math.min(1, progress * 1.6),
+            transition: settling ? `opacity ${SLIDE_MS}ms ease-out` : undefined,
+          }}
+        >
+          {header}
+        </div>
+      ) : null}
       <div
         className={cn(
           "flex min-h-0 flex-1 touch-pan-y flex-col gap-3",
@@ -72,6 +88,7 @@ export function PhoneFrame({
           if (drag.axis === "x") {
             // no tab that way: the door gives a little, then resists
             setOffset(neighbour(dx) ? dx : dx * 0.25);
+            setProgress(neighbour(dx) ? Math.abs(dx) / (event.currentTarget.clientWidth || window.innerWidth) : 0);
           }
         }}
         onTouchEnd={(event) => {
@@ -88,6 +105,7 @@ export function PhoneFrame({
           setSettling(true);
           if (next && (Math.abs(dx) > width / 3 || flick)) {
             setOffset(dx < 0 ? -width : width);
+            setProgress(1);
             window.setTimeout(() => {
               enterFrom = dx < 0 ? 1 : -1;
               onSelectTab(next);
@@ -95,6 +113,7 @@ export function PhoneFrame({
             return;
           }
           setOffset(0);
+          setProgress(0);
           window.setTimeout(() => setSettling(false), SLIDE_MS);
         }}
         onTouchCancel={() => {
@@ -102,6 +121,8 @@ export function PhoneFrame({
           if (dragRef.current?.axis === "x") {
             setSettling(true);
             setOffset(0);
+            setProgress(0);
+          setProgress(0);
             window.setTimeout(() => setSettling(false), SLIDE_MS);
           }
           dragRef.current = null;
@@ -135,7 +156,9 @@ export function PhoneFrame({
             >
               <Icon className="h-5 w-5" />
               {/* only the current tab names itself; the others are icons */}
-              {active ? <span>{label}</span> : null}
+              {active ? (
+                <span className="inline-block origin-left animate-[fs-zoom-in_200ms_ease-out]">{label}</span>
+              ) : null}
             </Button>
           );
         })}

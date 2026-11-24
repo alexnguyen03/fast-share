@@ -73,7 +73,7 @@ export function Toaster(): React.JSX.Element | null {
   }
 
   return (
-    <div className="pointer-events-none fixed right-4 bottom-14 left-4 z-50 flex flex-col items-center gap-1.5">
+    <div className="toaster pointer-events-none fixed right-4 bottom-14 left-4 z-50 flex flex-col items-center gap-1.5">
       {items.map((item) => (
         <div
           key={item.id}
