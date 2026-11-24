@@ -29,6 +29,7 @@ import { getOrCreateRoot } from "../../shared/ui/render";
 import { showToast, Toaster } from "../../shared/ui/toast";
 import { PhoneFrame, type PhoneTab } from "../frame";
 import { PullToRefresh } from "../pull-to-refresh";
+import { groupLabelClass } from "../settings-group";
 import { errorText, latestNote, note } from "../log";
 
 function runningInApp(): boolean {
@@ -421,7 +422,7 @@ export function PhoneDevicesScreen({
             {noticeText}
           </p>
         ) : null}
-        <h2 className="mt-1 mb-0.5 text-sm font-semibold text-foreground">
+        <h2 className={`mt-1 ${groupLabelClass}`}>
           {en.connected}
         </h2>
         <Card className="flex flex-col gap-1 border-0 bg-accent px-3 py-2 shadow-none">
@@ -476,7 +477,7 @@ export function PhoneDevicesScreen({
         </Card>
 
         <div className="mt-1 mb-0.5 flex items-baseline justify-between gap-2">
-          <h2 className="m-0 min-w-0 truncate text-sm font-semibold text-foreground">
+          <h2 className={`min-w-0 truncate ${groupLabelClass}`}>
             {en.inThisLan}
             {wifiName ? (
               <span className="font-normal text-muted-foreground"> · {wifiName}</span>
@@ -543,7 +544,7 @@ export function PhoneDevicesScreen({
         </Card>
 
         <div className="mt-1 mb-0.5 flex items-center justify-between gap-2">
-          <h2 className="m-0 text-sm font-semibold text-foreground">
+          <h2 className={groupLabelClass}>
             {en.pairComputerTitle}
           </h2>
           <Button

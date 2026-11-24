@@ -1,7 +1,7 @@
 import * as React from "react";
 import {
   ArrowUpRight,
-  Crop,
+  Circle,
   ChevronLeft,
   ChevronRight,
   CopyPlus,
@@ -11,13 +11,15 @@ import {
   PenTool,
   Loader2,
   Redo2,
+  Slash,
+  Square,
   RotateCcw,
   Trash2,
   Type,
   Undo2,
 } from "lucide-react";
 import { en } from "../../shared/locales/en";
-import { markColors, type EditorTool, type Mark } from "../../shared/tools";
+import { markColors, type EditorTool, type Mark, type ShapeTool } from "../../shared/tools";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,6 +35,7 @@ import { Input } from "../../shared/ui/input";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import { ColorPickerButton } from "../../shared/ui/color-picker";
 import { filesToBase64 } from "../devices/devices";
+import { dragCrop, FULL_CROP, isFullCrop, type CropGrip, type CropRect } from "./crop";
 
 export type Draft = {
   id: string;
@@ -52,12 +55,18 @@ type Options = {
 };
 
 const toolIcons: Record<EditorTool, React.ReactNode> = {
-  crop: <Crop className="h-4 w-4" />,
+  line: <Slash className="h-4 w-4" />,
+  rect: <Square className="h-4 w-4" />,
+  ellipse: <Circle className="h-4 w-4" />,
   arrow: <ArrowUpRight className="h-4 w-4" />,
   blur: <Grid className="h-4 w-4" />,
   text: <Type className="h-4 w-4" />,
   erase: <Eraser className="h-4 w-4" />,
 };
+
+const SHAPES: ShapeTool[] = ["line", "rect", "ellipse", "arrow"];
+// Room around the picture so the crop handles on its edges can be grabbed.
+const STAGE_PAD = 22;
 
 function SendIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -82,6 +91,10 @@ function SendIcon({ className }: { className?: string }): React.JSX.Element {
 
 function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element {
   const [tool, setTool] = React.useState<EditorTool>("arrow");
+  const [shape, setShape] = React.useState<ShapeTool>("arrow");
+  const [shapesOpen, setShapesOpen] = React.useState<boolean>(false);
+  // the crop frame while a grip is dragged; committed as a crop mark on release
+  const cropDragRef = React.useRef<{ grip: CropGrip; rect: CropRect } | null>(null);
   const [color, setColor] = React.useState<string>(markColors[0]);
   const [selected, setSelected] = React.useState<number>(0);
   const [editing, setEditing] = React.useState<{ x: number; y: number; text: string } | null>(null);
@@ -286,7 +299,10 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     if (!img.naturalWidth) {
       return;
     }
-    const scale = Math.min(width / img.naturalWidth, height / img.naturalHeight);
+    const scale = Math.min(
+      (width - 2 * STAGE_PAD) / img.naturalWidth,
+      (height - 2 * STAGE_PAD) / img.naturalHeight,
+    );
     const drawW = img.naturalWidth * scale;
     const drawH = img.naturalHeight * scale;
     viewRectRef.current = {
@@ -306,8 +322,11 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
       ? [...currentDraft.marks, currentMarkRef.current]
       : currentDraft.marks;
     for (const mark of marks) {
-      drawMark(ctx, mark, viewRectRef.current, img);
+      if (mark.tool !== "crop") {
+        drawMark(ctx, mark, viewRectRef.current, img);
+      }
     }
+    drawCropFrame(ctx, cropDragRef.current?.rect ?? cropOf(currentDraft), viewRectRef.current);
     const picked = selectedRef.current === null ? undefined : currentDraft.marks[selectedRef.current];
     if (picked) {
       drawSelection(ctx, picked, viewRectRef.current);
@@ -393,7 +412,6 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     }
   }
 
-  const cropMark = currentDraft?.marks.find((m) => m.tool === "crop");
   const selMark = sel === null ? undefined : currentDraft?.marks[sel];
   let menuPos: { left: number; top: number } | null = null;
   const menuCtx = canvasRef.current?.getContext("2d");
@@ -412,9 +430,14 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
     }
   }
 
+  const shapeLabels: Record<ShapeTool, string> = {
+    line: en.line,
+    rect: en.rectangle,
+    ellipse: en.circle,
+    arrow: en.arrow,
+  };
+  const shapeActive = (SHAPES as EditorTool[]).includes(tool);
   const toolButtons: Array<[EditorTool, string]> = [
-    ["crop", en.crop],
-    ["arrow", en.arrow],
     ["blur", en.blur],
     ["text", en.text],
     ["erase", en.erase],
@@ -442,21 +465,22 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
         </Button>
         <div className="flex items-center gap-1">
         <Button
-          variant={markup ? "default" : "secondary"}
+          variant="ghost"
           size="icon"
           aria-label={en.markup}
           aria-pressed={markup}
-          className="h-11 w-11 rounded-full"
+          // soft like the tab bar: tinted when on, plain icon when off
+          className={markup ? "h-11 w-11 rounded-full bg-accent text-primary hover:bg-accent" : "h-11 w-11 rounded-full text-muted-foreground"}
           onClick={() => setMarkup(!markup)}
         >
           <PenTool className="h-5 w-5" />
         </Button>
         <Button
-          variant="default"
+          variant="ghost"
           size="icon"
           aria-label={en.sendCount(options.drafts.length)}
           title={en.sendCount(options.drafts.length)}
-          className="h-11 w-11 rounded-full"
+          className="h-11 w-11 rounded-full bg-accent text-primary hover:bg-accent"
           disabled={sending || options.drafts.length === 0}
           onClick={() => {
             void handleSend();
@@ -565,6 +589,18 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
                 return;
               }
             }
+            setShapesOpen(false);
+            if (currentDraft && raw) {
+              const view = viewRectRef.current;
+              const grip = cropGripAt(cropOf(currentDraft), raw.x * view.w, raw.y * view.h, view);
+              if (grip) {
+                select(null);
+                cropDragRef.current = { grip, rect: cropOf(currentDraft) };
+                setDragging(true);
+                event.currentTarget.setPointerCapture(event.pointerId);
+                return;
+              }
+            }
             if (selectedRef.current !== null) {
               select(null);
             }
@@ -575,7 +611,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             }
             // Dragging a mark of the active tool moves it instead of drawing a new one.
             const ctx = event.currentTarget.getContext("2d");
-            if (ctx && tool !== "erase" && tool !== "crop") {
+            if (ctx && tool !== "erase") {
               const marks = currentDraft.marks;
               for (let index = marks.length - 1; index >= 0; index--) {
                 if (marks[index].tool === tool && hitMark(marks[index], start, viewRectRef.current, ctx)) {
@@ -600,6 +636,7 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             event.currentTarget.setPointerCapture(event.pointerId);
           }}
           onPointerCancel={() => {
+            cropDragRef.current = null;
             handleRef.current = null;
             setDragging(false);
             moveRef.current = null;
@@ -608,6 +645,15 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             blankSwipeRef.current = null;
           }}
           onPointerMove={(event) => {
+            const cropDrag = cropDragRef.current;
+            if (cropDrag && currentDraft) {
+              const p = point(event, true);
+              if (p) {
+                cropDrag.rect = dragCrop(cropOf(currentDraft), cropDrag.grip, p);
+                paint();
+              }
+              return;
+            }
             const grab = handleRef.current;
             if (grab && currentDraft) {
               const p = point(event, true);
@@ -660,6 +706,21 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             paint();
           }}
           onPointerUp={(event) => {
+            const cropDrag = cropDragRef.current;
+            if (cropDrag) {
+              cropDragRef.current = null;
+              setDragging(false);
+              if (currentDraft) {
+                const rest = currentDraft.marks.filter((m) => m.tool !== "crop");
+                currentDraft.marks = isFullCrop(cropDrag.rect)
+                  ? rest
+                  : [...rest, { tool: "crop", ...cropDrag.rect }];
+                setRemovedMarks([]);
+              }
+              forceRender();
+              paint();
+              return;
+            }
             if (handleRef.current) {
               handleRef.current = null;
               setDragging(false);
@@ -708,12 +769,6 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
             const mark = markFromDrag(tool, originRef.current, end, color);
             currentMarkRef.current = null;
             if (currentDraft && markHasSize(mark)) {
-              if (mark.tool === "crop") {
-                currentDraft.marks = currentDraft.marks.filter(
-                  (existing) => existing.tool !== "crop",
-                );
-                setRemovedMarks([]);
-              }
               currentDraft.marks.push(mark);
               setRemovedMarks([]);
             }
@@ -728,30 +783,6 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
               {en.noImagesLeft}
             </p>
           </div>
-        ) : null}
-
-        {cropMark && cropMark.tool === "crop" ? (
-          <Button
-            variant="secondary"
-            size="icon"
-            aria-label={en.removeCrop}
-            title={en.removeCrop}
-            className="absolute z-20 h-8 w-8 rounded-full"
-            style={{
-              left: viewRectRef.current.x + (cropMark.x + cropMark.w) * viewRectRef.current.w - 36,
-              top: viewRectRef.current.y + cropMark.y * viewRectRef.current.h + 4,
-            }}
-            onClick={() => {
-              if (currentDraft) {
-                currentDraft.marks = currentDraft.marks.filter((m) => m.tool !== "crop");
-                setRemovedMarks([]);
-                forceRender();
-                paint();
-              }
-            }}
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
         ) : null}
 
         {selMark && menuPos && !dragging ? (
@@ -852,6 +883,33 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
         ) : null}
       </div>
 
+        {markup && shapesOpen ? (
+          <div className="absolute inset-x-3 bottom-3 z-30 flex items-center justify-around rounded-3xl bg-background p-3 shadow-xl ring-1 ring-border">
+            {SHAPES.map((name) => (
+              <Button
+                key={name}
+                variant="ghost"
+                size="icon"
+                aria-label={shapeLabels[name]}
+                aria-pressed={shape === name}
+                title={shapeLabels[name]}
+                className={
+                  shape === name
+                    ? "h-14 w-14 rounded-full bg-muted ring-2 ring-primary"
+                    : "h-12 w-12 rounded-full bg-muted"
+                }
+                onClick={() => {
+                  setShape(name);
+                  setTool(name);
+                  setShapesOpen(false);
+                }}
+              >
+                {toolIcons[name]}
+              </Button>
+            ))}
+          </div>
+        ) : null}
+
         {markup ? (
           <div className="absolute top-1/2 right-1.5 z-10 flex -translate-y-1/2 flex-col items-center gap-1 rounded-full bg-muted/90 p-1">
             <Button
@@ -887,6 +945,20 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
               <RotateCcw className="h-4 w-4" />
             </Button>
             <div className="my-0.5 h-px w-6 bg-border" />
+            <Button
+              variant={shapeActive ? "default" : "ghost"}
+              size="icon"
+              aria-label={en.shapes}
+              aria-expanded={shapesOpen}
+              title={en.shapes}
+              className="h-10 w-10 rounded-full"
+              onClick={() => {
+                setTool(shape);
+                setShapesOpen((open) => !open);
+              }}
+            >
+              {toolIcons[shape]}
+            </Button>
             {toolButtons.map(([name, label]) => (
               <Button
                 key={name}
@@ -896,7 +968,10 @@ function PhoneEditorScreen({ options }: { options: Options }): React.JSX.Element
                 aria-pressed={tool === name}
                 title={label}
                 className="h-10 w-10 rounded-full"
-                onClick={() => setTool(name)}
+                onClick={() => {
+                  setTool(name);
+                  setShapesOpen(false);
+                }}
               >
                 {toolIcons[name]}
               </Button>
@@ -1035,7 +1110,7 @@ function hitMark(
 ): boolean {
   const px = p.x * view.w;
   const py = p.y * view.h;
-  if (mark.tool === "arrow") {
+  if (mark.tool === "arrow" || mark.tool === "line") {
     const ax = mark.x1 * view.w;
     const ay = mark.y1 * view.h;
     const bx = mark.x2 * view.w - ax;
@@ -1053,14 +1128,14 @@ function hitMark(
     const ly = -dx * Math.sin(angle) + dy * Math.cos(angle);
     return Math.abs(lx) <= width / 2 + 8 && Math.abs(ly) <= size / 2 + 8;
   }
-  if (mark.tool === "blur") {
+  if (mark.tool === "blur" || mark.tool === "rect" || mark.tool === "ellipse") {
     return p.x >= mark.x && p.x <= mark.x + mark.w && p.y >= mark.y && p.y <= mark.y + mark.h;
   }
   return false; // crop is removed with undo
 }
 
 function moveMark(mark: Mark, dx: number, dy: number): Mark {
-  if (mark.tool === "arrow") {
+  if (mark.tool === "arrow" || mark.tool === "line") {
     return { ...mark, x1: mark.x1 + dx, y1: mark.y1 + dy, x2: mark.x2 + dx, y2: mark.y2 + dy };
   }
   if (mark.tool === "text") {
@@ -1095,7 +1170,7 @@ function markGeometry(
   view: View,
   ctx: CanvasRenderingContext2D,
 ): { outline: Pt[]; handles: Handle[] } {
-  if (mark.tool === "arrow") {
+  if (mark.tool === "arrow" || mark.tool === "line") {
     return {
       outline: [],
       handles: [
@@ -1123,7 +1198,7 @@ function markGeometry(
       ],
     };
   }
-  if (mark.tool === "blur") {
+  if (mark.tool === "blur" || mark.tool === "rect" || mark.tool === "ellipse") {
     const x = mark.x * view.w;
     const y = mark.y * view.h;
     const w = mark.w * view.w;
@@ -1156,7 +1231,7 @@ function dragHandle(
 ): Mark {
   const nx = p.x / view.w;
   const ny = p.y / view.h;
-  if (start.tool === "arrow") {
+  if (start.tool === "arrow" || start.tool === "line") {
     return kind === "p1" ? { ...start, x1: nx, y1: ny } : { ...start, x2: nx, y2: ny };
   }
   if (start.tool === "text") {
@@ -1177,7 +1252,7 @@ function dragHandle(
       y: (c.y + (size * ratio) / 2) / view.h,
     };
   }
-  if (start.tool === "blur") {
+  if (start.tool === "blur" || start.tool === "rect" || start.tool === "ellipse") {
     return {
       ...start,
       w: Math.min(1 - start.x, Math.max(0.02, nx - start.x)),
@@ -1270,28 +1345,22 @@ function markFromDrag(
   end: { x: number; y: number },
   color: string,
 ): Mark {
-  if (tool === "arrow") {
-    return {
-      tool: "arrow",
-      x1: start.x,
-      y1: start.y,
-      x2: end.x,
-      y2: end.y,
-      color,
-    };
+  if (tool === "arrow" || tool === "line") {
+    const ends = { x1: start.x, y1: start.y, x2: end.x, y2: end.y, color };
+    return tool === "line" ? { tool: "line", ...ends } : { tool: "arrow", ...ends };
   }
   const x = Math.min(start.x, end.x);
   const y = Math.min(start.y, end.y);
   const w = Math.abs(end.x - start.x);
   const h = Math.abs(end.y - start.y);
-  if (tool === "blur") {
-    return { tool: "blur", x, y, w, h };
+  if (tool === "rect" || tool === "ellipse") {
+    return tool === "rect" ? { tool: "rect", x, y, w, h, color } : { tool: "ellipse", x, y, w, h, color };
   }
-  return { tool: "crop", x, y, w, h };
+  return { tool: "blur", x, y, w, h };
 }
 
 function markHasSize(mark: Mark): boolean {
-  if (mark.tool === "arrow") {
+  if (mark.tool === "arrow" || mark.tool === "line") {
     return Math.hypot(mark.x2 - mark.x1, mark.y2 - mark.y1) > 0.01;
   }
   if (mark.tool === "text") {
@@ -1337,8 +1406,12 @@ function drawMark(
     context.strokeRect(x, y, w, h);
     return;
   }
-  if (mark.tool === "arrow") {
+  if (mark.tool === "arrow" || mark.tool === "line") {
     drawArrow(context, view, mark);
+    return;
+  }
+  if (mark.tool === "rect" || mark.tool === "ellipse") {
+    drawOutline(context, view, mark);
     return;
   }
   if (mark.tool === "text") {
@@ -1391,7 +1464,7 @@ function drawMark(
 function drawArrow(
   context: CanvasRenderingContext2D,
   view: { x: number; y: number; w: number; h: number },
-  mark: Extract<Mark, { tool: "arrow" }>,
+  mark: Extract<Mark, { tool: "arrow" | "line" }>,
 ): void {
   const x1 = view.x + mark.x1 * view.w;
   const y1 = view.y + mark.y1 * view.h;
@@ -1416,6 +1489,9 @@ function drawArrow(
   context.lineWidth = 3 * unit;
   strokeLine();
 
+  if (mark.tool === "line") {
+    return;
+  }
   const angle = Math.atan2(y2 - y1, x2 - x1);
   const head = 12 * unit;
   context.beginPath();
@@ -1434,6 +1510,109 @@ function drawArrow(
   context.stroke();
   context.fillStyle = mark.color;
   context.fill();
+}
+
+function cropOf(draft: Draft): CropRect {
+  const crop = [...draft.marks].reverse().find((mark) => mark.tool === "crop");
+  return crop && crop.tool === "crop" ? { x: crop.x, y: crop.y, w: crop.w, h: crop.h } : FULL_CROP;
+}
+
+function cropGrips(rect: CropRect, view: View): Array<{ grip: CropGrip; x: number; y: number }> {
+  const l = rect.x * view.w;
+  const t = rect.y * view.h;
+  const r = (rect.x + rect.w) * view.w;
+  const b = (rect.y + rect.h) * view.h;
+  const cx = (l + r) / 2;
+  const cy = (t + b) / 2;
+  return [
+    { grip: "nw", x: l, y: t },
+    { grip: "ne", x: r, y: t },
+    { grip: "sw", x: l, y: b },
+    { grip: "se", x: r, y: b },
+    { grip: "n", x: cx, y: t },
+    { grip: "s", x: cx, y: b },
+    { grip: "w", x: l, y: cy },
+    { grip: "e", x: r, y: cy },
+  ];
+}
+
+/** The crop grip under a touch at (px, py), in view pixels; corners win over edges. */
+function cropGripAt(rect: CropRect, px: number, py: number, view: View): CropGrip | null {
+  const hit = cropGrips(rect, view).find((g) => Math.hypot(g.x - px, g.y - py) <= 26);
+  return hit?.grip ?? null;
+}
+
+/** Dims what will be cut, outlines the frame and draws thick corner and edge grips. */
+function drawCropFrame(context: CanvasRenderingContext2D, rect: CropRect, view: View): void {
+  const x = view.x + rect.x * view.w;
+  const y = view.y + rect.y * view.h;
+  const w = rect.w * view.w;
+  const h = rect.h * view.h;
+  context.save();
+  if (!isFullCrop(rect)) {
+    context.fillStyle = "rgba(0, 0, 0, 0.5)";
+    context.beginPath();
+    context.rect(view.x, view.y, view.w, view.h);
+    context.rect(x, y, w, h);
+    context.fill("evenodd");
+  }
+  const primary = primaryColor();
+  context.strokeStyle = primary;
+  context.lineWidth = 1.5;
+  context.strokeRect(x, y, w, h);
+  context.lineWidth = 5;
+  context.lineCap = "round";
+  const arm = Math.min(22, w / 3, h / 3);
+  context.beginPath();
+  for (const [cx, cy, sx, sy] of [
+    [x, y, 1, 1],
+    [x + w, y, -1, 1],
+    [x, y + h, 1, -1],
+    [x + w, y + h, -1, -1],
+  ]) {
+    context.moveTo(cx + sx * arm, cy);
+    context.lineTo(cx, cy);
+    context.lineTo(cx, cy + sy * arm);
+  }
+  const bar = Math.min(12, w / 6, h / 6);
+  context.moveTo(x + w / 2 - bar, y);
+  context.lineTo(x + w / 2 + bar, y);
+  context.moveTo(x + w / 2 - bar, y + h);
+  context.lineTo(x + w / 2 + bar, y + h);
+  context.moveTo(x, y + h / 2 - bar);
+  context.lineTo(x, y + h / 2 + bar);
+  context.moveTo(x + w, y + h / 2 - bar);
+  context.lineTo(x + w, y + h / 2 + bar);
+  context.stroke();
+  context.restore();
+}
+
+function drawOutline(
+  context: CanvasRenderingContext2D,
+  view: View,
+  mark: Extract<Mark, { tool: "rect" | "ellipse" }>,
+): void {
+  const x = view.x + mark.x * view.w;
+  const y = view.y + mark.y * view.h;
+  const w = mark.w * view.w;
+  const h = mark.h * view.h;
+  const unit = Math.max(1, view.w / 400);
+  const trace = (): void => {
+    context.beginPath();
+    if (mark.tool === "ellipse") {
+      context.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    } else {
+      context.roundRect(x, y, w, h, 3 * unit);
+    }
+    context.stroke();
+  };
+  context.lineJoin = "round";
+  context.strokeStyle = haloColor(mark.color);
+  context.lineWidth = 7 * unit;
+  trace();
+  context.strokeStyle = mark.color;
+  context.lineWidth = 3 * unit;
+  trace();
 }
 
 function primaryColor(): string {

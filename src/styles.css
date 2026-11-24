@@ -313,3 +313,16 @@ html.desktop * {
 html.desktop *:hover {
   scrollbar-color: color-mix(in oklab, var(--muted-foreground) 45%, transparent) transparent;
 }
+
+/* The next phone tab slides in from the side the drag came from (see PhoneFrame). */
+@keyframes fs-enter-right {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes fs-enter-left {
+  from {
+    transform: translateX(-100%);
+  }
+}

@@ -2,7 +2,7 @@ import * as React from "react";
 import { en } from "../../shared/locales/en";
 import { cn } from "../../shared/lib/utils";
 import { Button } from "../../shared/ui/button";
-import { Card } from "../../shared/ui/card";
+import { SettingsGroup } from "../settings-group";
 import { Checkbox } from "../../shared/ui/checkbox";
 import { Label } from "../../shared/ui/label";
 
@@ -51,10 +51,7 @@ export function QuickCaptureCard(): React.JSX.Element | null {
   };
 
   return (
-    <Card className="flex flex-col gap-2.5 border-0 bg-muted p-3">
-      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {en.quickCapture}
-      </span>
+    <SettingsGroup label={en.quickCapture}>
       <div className="flex items-center justify-between">
         <Label htmlFor="handle">{en.quickCaptureHandle}</Label>
         <Checkbox
@@ -151,6 +148,6 @@ export function QuickCaptureCard(): React.JSX.Element | null {
           </div>
         </div>
       )}
-    </Card>
+    </SettingsGroup>
   );
 }

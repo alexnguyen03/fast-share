@@ -11,7 +11,6 @@ import {
   type Settings,
 } from "../../shared/settings";
 import { Button } from "../../shared/ui/button";
-import { Card } from "../../shared/ui/card";
 import { Checkbox } from "../../shared/ui/checkbox";
 import { Input } from "../../shared/ui/input";
 import { setVibrateEnabled, vibrateEnabled } from "../haptics";
@@ -19,6 +18,7 @@ import { Label } from "../../shared/ui/label";
 import { getOrCreateRoot } from "../../shared/ui/render";
 import { showToast } from "../../shared/ui/toast";
 import { PhoneFrame, type PhoneTab } from "../frame";
+import { SettingsGroup } from "../settings-group";
 import { QuickCaptureCard } from "./quick-capture";
 
 export function PhoneSettingsScreen({
@@ -106,8 +106,7 @@ export function PhoneSettingsScreen({
 
       {/* px-1 with -mx-1: room for the field outlines, which the scroll edge would clip */}
       <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-1 pt-1 pb-1">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="phoneName">{en.phoneName}</Label>
+        <SettingsGroup label={<Label htmlFor="phoneName">{en.phoneName}</Label>}>
           <Input
             id="phoneName"
             name="phoneName"
@@ -120,12 +119,9 @@ export function PhoneSettingsScreen({
               scheduleNameSave(next);
             }}
           />
-        </div>
+        </SettingsGroup>
 
-        <Card className="flex flex-col gap-2.5 border-0 bg-muted p-3">
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {en.appearance}
-          </span>
+        <SettingsGroup label={en.appearance}>
 
           <div className="flex flex-col gap-1.5">
             <span className="text-xs text-muted-foreground">
@@ -196,9 +192,10 @@ export function PhoneSettingsScreen({
               ))}
             </div>
           </div>
-        </Card>
+        </SettingsGroup>
 
-        <Card className="flex flex-row items-center justify-between border-0 bg-muted p-3">
+        <SettingsGroup label={en.general}>
+          <div className="flex items-center justify-between">
           <Label htmlFor="vibrate">{en.vibrateAfterSend}</Label>
           <Checkbox
             id="vibrate"
@@ -208,14 +205,12 @@ export function PhoneSettingsScreen({
               setVibrateEnabled(next === true);
             }}
           />
-        </Card>
+          </div>
+        </SettingsGroup>
 
         <QuickCaptureCard />
 
-        <Card className="mt-auto flex flex-col gap-1.5 border-0 bg-muted p-3">
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {en.appInfo}
-          </span>
+        <SettingsGroup label={en.appInfo} className="mt-auto">
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">{en.appVersionLabel}</span>
             <span className="font-medium text-foreground">
@@ -232,7 +227,7 @@ export function PhoneSettingsScreen({
               {en.appAuthorValue}
             </span>
           </div>
-        </Card>
+        </SettingsGroup>
       </div>
     </PhoneFrame>
   );
