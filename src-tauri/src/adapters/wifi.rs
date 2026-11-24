@@ -43,6 +43,8 @@ mod ios {
         fn CFRelease(object: CFTypeRef);
     }
 
+    // On iOS Rust is a static library, so these #[link] lines do not reach the app's link step.
+    // The frameworks are linked by tauri.conf.json bundle.iOS.frameworks; keep the two in step.
     #[link(name = "SystemConfiguration", kind = "framework")]
     extern "C" {
         fn CNCopySupportedInterfaces() -> CFTypeRef;
